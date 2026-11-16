@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Overview{% endblock %}
+{% block content %}
+<h1>Catalog overview</h1>
+<div class="sub">Real-time counts from the live database &middot; no cached/sample numbers</div>
+
+<div class="cards">
+  <div class="card"><span class="num">{{ stats.providers }}</span><span class="label">Providers</span></div>
+  <div class="card"><span class="num">{{ stats.models }}</span><span class="label">Models</span></div>
+  <div class="card"><span class="num">{{ stats.offerings }}</span><span class="label">Offerings</span></div>
+  <div class="card"><span class="num">{{ stats.offerings_ga }}</span><span class="label">Generally available</span></div>
+  <div class="card"><span class="num">{{ stats.offerings_deprecated }}</span><span class="label">Deprecated</span></div>
+</div>
+<div class="cards">
+  <div class="card"><span class="num">{{ stats.price_points }}</span><span class="label">Price points</span></div>
+  <div class="card"><span class="num">{{ stats.measurements }}</span><span class="label">Measurements</span></div>
+  <div class="card"><span class="num">{{ stats.relationships }}</span><span class="label">Relationships</span></div>
+  <div class="card"><span class="num">{{ stats.eval_runs }}</span><span class="label">Eval runs</span></div>
+  <div class="card"><span class="num">{{ stats.eval_results }}</span><span class="label">Eval results</span></div>
+</div>
+
+<h2>Pricing freshness</h2>
+<p>{{ stats.fresh_24h }} of {{ stats.priced_offerings }} priced offerings updated in the last 24 hours
+  (<strong>{{ stats.freshness_pct }}%</strong>). Refresh with <span class="mono">scripts.run_connectors</span>
+  or the scheduler daemon.</p>
+
+<h2>Offerings by host</h2>
+<table>
+  <tr><th>Host provider</th><th>Offerings</th></tr>
+  {% for name, count in host_breakdown %}
+  <tr><td><a href="/dashboard/offerings?provider={{ name }}">{{ name }}</a></td><td>{{ count }}</td></tr>
+  {% endfor %}
+</table>
+
+<h2>Recent evidence (connector / eval activity)</h2>
+<table>
+  <tr><th>Collected</th><th>Type</th><th>Method</th><th>URI</th></tr>
+  {% for e in recent_evidence %}
+  <tr>
+    <td>{{ e.collected_at.strftime("%Y-%m-%d %H:%M UTC") }}</td>
+    <td>{{ e.type }}</td>
+    <td>{{ e.method or "—" }}</td>
+    <td class="mono">{{ (e.uri or "—")[:60] }}</td>
+  </tr>
+  {% endfor %}
+</table>
+<p><a href="/dashboard/evidence">See all evidence &rarr;</a></p>
+{% endblock %}

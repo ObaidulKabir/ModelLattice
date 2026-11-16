@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Evidence{% endblock %}
+{% block content %}
+<h1>Evidence sources</h1>
+<div class="sub">{{ total }} total &middot; every price, measurement and relationship traces back to one of these rows</div>
+
+<table>
+  <tr><th>Collected</th><th>Type</th><th>Method</th><th>URI</th><th>Content hash</th></tr>
+  {% for e in rows %}
+  <tr>
+    <td>{{ e.collected_at.strftime("%Y-%m-%d %H:%M UTC") }}</td>
+    <td>
+      {% if e.type == "official_doc" %}<span class="pill ok">official_doc</span>
+      {% elif e.type == "platform_eval" %}<span class="pill ok">platform_eval</span>
+      {% elif e.type == "derived_inference" %}<span class="pill warn">derived_inference</span>
+      {% else %}<span class="pill off">{{ e.type }}</span>{% endif %}
+    </td>
+    <td>{{ e.method or "—" }}</td>
+    <td class="mono">{{ e.uri or "—" }}</td>
+    <td class="mono muted">{{ (e.content_hash or "")[:12] }}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<div class="pagination">
+  {% if page > 1 %}<a href="?page={{ page - 1 }}">&larr; Prev</a>{% endif %}
+  <span>Page {{ page }} of {{ pages }}</span>
+  {% if page < pages %}<a href="?page={{ page + 1 }}">Next &rarr;</a>{% endif %}
+</div>
+{% endblock %}

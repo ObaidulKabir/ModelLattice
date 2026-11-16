@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}{{ offering.model.family }}{% endblock %}
+{% block content %}
+<a class="back" href="/dashboard/offerings">&larr; All offerings</a>
+<h1>{{ offering.model.family }}{% if offering.model.version %} {{ offering.model.version }}{% endif %}</h1>
+<div class="sub">via {{ offering.provider.name }} &middot; <span class="mono">{{ offering.provider_model_name }}</span></div>
+
+<div class="kv">
+  <div>Developer</div><div>{{ offering.model.developer.name if offering.model.developer else "—" }}</div>
+  <div>Lifecycle</div><div>{{ offering.lifecycle }}</div>
+  <div>Modalities</div><div>{{ offering.model.modalities | join(", ") if offering.model.modalities else "—" }}</div>
+  <div>Context window</div><div>{{ offering.limits.get("max_context_tokens", "—") if offering.limits else "—" }} tokens</div>
+  <div>API features</div><div>{{ offering.api_features or "—" }}</div>
+  <div>Offering ID</div><div class="mono">{{ offering.id }}</div>
+  <div>Model ID</div><div class="mono">{{ offering.model_id }}</div>
+</div>
+
+<h2>Other offerings of this model ({{ siblings|length }})</h2>
+<p class="sub">Same underlying Model, different commercial exposure - this is the Model/Offering distinction. Compare hosts and tiers directly.</p>
+<table>
+  <tr><th>Host</th><th>Offering name</th><th>Lifecycle</th></tr>
+  {% for s in siblings %}
+  <tr {% if s.id == offering.id %}style="font-weight:600"{% endif %}>
+    <td>{{ s.provider.name }}</td>
+    <td class="mono"><a href="/dashboard/offerings/{{ s.id }}">{{ s.provider_model_name }}</a>{% if s.id == offering.id %} (this page){% endif %}</td>
+    <td>{{ s.lifecycle }}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h2>Pricing history</h2>
+<table>
+  <tr><th>Type</th><th>Unit</th><th>Amount (USD)</th><th>Effective from</th><th>Effective to</th></tr>
+  {% for p in prices %}
+  <tr>
+    <td>{{ p.price_type }}</td><td>{{ p.unit }}</td><td>${{ "%.4f"|format(p.amount) }}</td>
+    <td>{{ p.effective_from.strftime("%Y-%m-%d %H:%M") }}</td>
+    <td>{% if p.effective_to %}{{ p.effective_to.strftime("%Y-%m-%d %H:%M") }}{% else %}<span class="pill ok">current</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+  {% if not prices %}<tr><td colspan="5" class="muted">No pricing on file.</td></tr>{% endif %}
+</table>
+
+<h2>Measurements (UMIM)</h2>
+<table>
+  <tr><th>Attribute</th><th>Status</th><th>Value</th><th>Task profile</th><th>Maturity</th><th>Confidence</th><th>Observed</th></tr>
+  {% for m in measurements %}
+  <tr>
+    <td>{{ m.attribute_key }}</td>
+    <td>
+      {% if m.status == "supported" %}<span class="pill ok">supported</span>
+      {% elif m.status == "unsupported" %}<span class="pill warn">unsupported</span>
+      {% else %}<span class="pill off">{{ m.status }}</span>{% endif %}
+    </td>
+    <td class="mono">{{ m.value.raw if m.value else "—" }}{% if m.value and m.value.ci %} [{{ "%.2f"|format(m.value.ci[0]) }}, {{ "%.2f"|format(m.value.ci[1]) }}]{% endif %}</td>
+    <td>{{ m.context.get("task_profile", "—") if m.context else "—" }}</td>
+    <td>{{ m.maturity or "—" }}</td>
+    <td>{{ "%.2f"|format(m.confidence) if m.confidence is not none else "—" }}</td>
+    <td>{{ m.observed_at.strftime("%Y-%m-%d %H:%M") if m.observed_at else "—" }}</td>
+  </tr>
+  {% endfor %}
+  {% if not measurements %}<tr><td colspan="7" class="muted">No measurements on file.</td></tr>{% endif %}
+</table>
+
+<h2>Relationships (UMRG)</h2>
+<table>
+  <tr><th>Type</th><th>Direction</th><th>Confidence</th><th>Target</th><th>Target cost/1k</th><th>Note</th></tr>
+  {% for a in alternatives %}
+  <tr>
+    <td>{{ a.relationship_type }}</td>
+    <td>{{ a.direction }}</td>
+    <td>{{ "%.2f"|format(a.confidence) if a.confidence is not none else "—" }}</td>
+    <td>{% if a.target %}<a href="/dashboard/offerings/{{ a.target_offering_id }}">{{ a.target.provider_name }} / {{ a.target.model_name }}</a>{% else %}<span class="muted">unresolved</span>{% endif %}</td>
+    <td>{% if a.target and a.target.est_cost_per_1k_tasks_usd is not none %}${{ "%.3f"|format(a.target.est_cost_per_1k_tasks_usd) }}{% else %}—{% endif %}</td>
+    <td class="muted">{{ a.profile.get("note", a.profile.get("method", "")) if a.profile else "" }}</td>
+  </tr>
+  {% endfor %}
+  {% if not alternatives %}<tr><td colspan="6" class="muted">No relationships on file.</td></tr>{% endif %}
+</table>
+
+<h2>Evaluation history</h2>
+<table>
+  <tr><th>Task profile</th><th>Task</th><th>Score</th><th>Passed</th><th>Latency (ms)</th><th>When</th></tr>
+  {% for r, key, version in eval_results %}
+  <tr>
+    <td>{{ key }}@{{ version }}</td><td>{{ r.task_id }}</td>
+    <td>{{ "%.2f"|format(r.score) if r.score is not none else "—" }}</td>
+    <td>{% if r.passed %}<span class="pill ok">yes</span>{% else %}<span class="pill warn">no</span>{% endif %}</td>
+    <td>{{ r.latency_ms or "—" }}</td>
+    <td>{{ r.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+  </tr>
+  {% endfor %}
+  {% if not eval_results %}<tr><td colspan="6" class="muted">No evaluations run against this offering yet.</td></tr>{% endif %}
+</table>
+
+<h2>Regression check (7-day window)</h2>
+{% if regression %}
+<div class="kv">
+  <div>Baseline window</div><div>n={{ regression.baseline.n }}, mean latency {{ "%.0f"|format(regression.baseline.mean_latency_ms) if regression.baseline.mean_latency_ms else "—" }} ms, error rate {{ "%.0f%%"|format(regression.baseline.error_rate * 100) if regression.baseline.error_rate is not none else "—" }}</div>
+  <div>Recent window</div><div>n={{ regression.recent.n }}, mean latency {{ "%.0f"|format(regression.recent.mean_latency_ms) if regression.recent.mean_latency_ms else "—" }} ms, error rate {{ "%.0f%%"|format(regression.recent.error_rate * 100) if regression.recent.error_rate is not none else "—" }}</div>
+  <div>Result</div><div>
+    {% if regression.insufficient_data %}<span class="pill off">insufficient data</span>
+    {% elif regression.latency_regression or regression.error_rate_regression %}<span class="pill warn">regression flagged</span>
+    {% else %}<span class="pill ok">no regression</span>{% endif %}
+    &nbsp;{{ regression.reasons | join("; ") }}
+  </div>
+</div>
+{% endif %}
+{% endblock %}

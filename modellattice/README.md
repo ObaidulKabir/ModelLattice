@@ -21,7 +21,9 @@ app/
   services/
     cost.py        Cost-per-1k-tasks estimation from current pricing.
     recommender.py UMNE v0: hard filters -> Pareto ranking -> policy order.
-  api/            FastAPI routers: catalog, recommend, feedback.
+  api/            FastAPI routers: catalog, recommend, feedback, dashboard.
+  templates/      Server-rendered Jinja2 templates for the internal
+                  dashboard below - no SPA, no build step.
   main.py         App entrypoint.
 mcp_server/
   server.py       MCP tools (find_models, recommend_model, compare_models,
@@ -94,6 +96,14 @@ scripts/repair_model_identity.py  One-time (idempotent) cleanup for a real
   ingested before the fix (run once if you seeded a catalog before this
   commit; a clean run_connectors afterward creates no duplicates).
 migrations/       Alembic migrations (Postgres is the system of record).
+app/api/dashboard.py + app/templates/  Internal dashboard (v0.2 Section
+  12, week 4 "internal dashboard" / week 10 "savings and quality
+  dashboard") - server-rendered, not a SPA: an overview (catalog counts,
+  pricing freshness, recent connector/eval activity), a filterable/
+  searchable offerings browser, and a per-offering detail page (prices,
+  measurements, relationships, eval history, a live regression check).
+  Every number comes from the same service functions the REST API and
+  MCP server use - nothing is duplicated or precomputed separately.
 app/evals/
   tasks/            Real task banks, one module per profile:
                     structured_extraction_v1.py (5 JSON-extraction tasks),
@@ -164,7 +174,8 @@ cp .env.example .env                       # adjust DATABASE_URL if needed
 ./.venv/Scripts/python.exe -m scripts.run_connectors openai_pricing anthropic_pricing google_pricing
 
 ./.venv/Scripts/python.exe -m uvicorn app.main:app --reload --port 8008
-# -> http://127.0.0.1:8008/docs
+# -> http://127.0.0.1:8008/docs       (REST API, OpenAPI docs)
+# -> http://127.0.0.1:8008/dashboard  (internal dashboard - browse everything above)
 ```
 
 Re-running `scripts.run_connectors` is safe and idempotent: unchanged

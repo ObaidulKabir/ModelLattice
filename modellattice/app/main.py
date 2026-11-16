@@ -6,7 +6,7 @@ service without changing the external contracts in app/schemas.
 """
 from fastapi import FastAPI
 
-from app.api import catalog, feedback, recommend
+from app.api import catalog, dashboard, feedback, recommend
 from app.config import get_settings
 
 settings = get_settings()
@@ -20,6 +20,7 @@ app = FastAPI(
 app.include_router(catalog.router)
 app.include_router(recommend.router)
 app.include_router(feedback.router)
+app.include_router(dashboard.router)
 
 
 @app.get("/health")

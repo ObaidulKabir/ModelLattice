@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{% block title %}ModelLattice{% endblock %} · ModelLattice</title>
+<style>
+  :root {
+    --navy: #17324D; --ink: #24313C; --blue: #27628C; --teal: #167D78;
+    --zebra: #F4F7FA; --rule: #C9D3DD; --amber: #B76E24; --bg: #FBFBF8;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, Segoe UI, Arial, sans-serif; color: var(--ink); background: var(--bg); margin: 0; }
+  header { background: var(--navy); color: #fff; padding: 14px 24px; display: flex; align-items: center; gap: 24px; }
+  header a { color: #fff; text-decoration: none; font-weight: 600; }
+  header a.brand { font-size: 18px; letter-spacing: 0.5px; }
+  header nav a { color: #C9D9E8; font-weight: 500; }
+  header nav a:hover { color: #fff; }
+  main { max-width: 1200px; margin: 0 auto; padding: 24px; }
+  h1 { font-size: 22px; margin: 0 0 4px; color: var(--navy); }
+  h2 { font-size: 16px; color: var(--blue); margin: 28px 0 10px; border-bottom: 1px solid var(--rule); padding-bottom: 6px; }
+  .sub { color: #5E6B78; font-size: 13px; margin-bottom: 18px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; background: #fff; }
+  th, td { padding: 7px 10px; border-bottom: 1px solid var(--rule); text-align: left; vertical-align: top; }
+  th { background: var(--navy); color: #fff; font-weight: 600; position: sticky; top: 0; }
+  tr:nth-child(even) td { background: var(--zebra); }
+  tr:hover td { background: #EAF2F8; }
+  a { color: var(--blue); }
+  .cards { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 10px; }
+  .card { background: #fff; border: 1px solid var(--rule); border-radius: 8px; padding: 14px 18px; min-width: 150px; }
+  .card .num { font-size: 26px; font-weight: 700; color: var(--navy); display: block; }
+  .card .label { font-size: 12px; color: #5E6B78; text-transform: uppercase; letter-spacing: 0.4px; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+  .pill.ok { background: #E3F1EF; color: var(--teal); }
+  .pill.warn { background: var(--amber-bg, #FBF2E8); color: var(--amber); }
+  .pill.off { background: #eee; color: #888; }
+  .filters { margin-bottom: 14px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .filters input, .filters select { padding: 6px 8px; border: 1px solid var(--rule); border-radius: 4px; font-size: 13px; }
+  .filters button { padding: 6px 14px; border: none; background: var(--blue); color: #fff; border-radius: 4px; cursor: pointer; }
+  .muted { color: #8a97a3; }
+  .mono { font-family: Consolas, monospace; font-size: 12px; }
+  .pagination { margin-top: 14px; display: flex; gap: 8px; align-items: center; font-size: 13px; }
+  .back { margin-bottom: 14px; display: inline-block; }
+  .kv { display: grid; grid-template-columns: 220px 1fr; gap: 4px 12px; font-size: 13px; margin-bottom: 18px; }
+  .kv div:nth-child(odd) { color: #5E6B78; }
+  footer { text-align: center; color: #8a97a3; font-size: 12px; padding: 30px 0 40px; }
+</style>
+</head>
+<body>
+<header>
+  <a class="brand" href="/dashboard">ModelLattice</a>
+  <nav>
+    <a href="/dashboard">Overview</a>
+    &nbsp;&nbsp;<a href="/dashboard/offerings">Offerings</a>
+    &nbsp;&nbsp;<a href="/dashboard/evidence">Evidence</a>
+    &nbsp;&nbsp;<a href="/docs">API docs</a>
+  </nav>
+</header>
+<main>
+{% block content %}{% endblock %}
+</main>
+<footer>Internal dashboard &middot; ModelLattice v0.2 &middot; data only, no execution</footer>
+</body>
+</html>
