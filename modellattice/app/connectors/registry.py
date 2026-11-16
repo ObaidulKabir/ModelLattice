@@ -16,7 +16,7 @@ connector is one dict entry; nothing else needs to change.
 import dataclasses
 import datetime as dt
 
-from app.connectors import openai_pricing, openrouter
+from app.connectors import anthropic_pricing, google_pricing, openai_pricing, openrouter
 from app.connectors.base import ingest as _ingest_identity_and_pricing
 from app.db import SessionLocal
 from app.models.measurement import EvidenceSource
@@ -40,6 +40,22 @@ CONNECTORS = {
         "evidence_type": EvidenceType.OFFICIAL_DOC.value,
         "method": "openai_pricing connector: first-party pricing page (cross-check vs OpenRouter resale pricing)",
         "ingest": openai_pricing.ingest_openai_pricing,
+    },
+    "anthropic_pricing": {
+        "fetch": anthropic_pricing.fetch_raw,
+        "url": anthropic_pricing.PRICING_URL,
+        "host_provider_name": "Anthropic",
+        "evidence_type": EvidenceType.OFFICIAL_DOC.value,
+        "method": "anthropic_pricing connector: first-party pricing page (cross-check vs OpenRouter resale pricing)",
+        "ingest": anthropic_pricing.ingest_anthropic_pricing,
+    },
+    "google_pricing": {
+        "fetch": google_pricing.fetch_raw,
+        "url": google_pricing.PRICING_URL,
+        "host_provider_name": "Google",
+        "evidence_type": EvidenceType.OFFICIAL_DOC.value,
+        "method": "google_pricing connector: first-party pricing page (cross-check vs OpenRouter resale pricing)",
+        "ingest": google_pricing.ingest_google_pricing,
     },
 }
 
