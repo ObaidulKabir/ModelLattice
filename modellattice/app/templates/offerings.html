@@ -24,7 +24,7 @@
 <table>
   <tr>
     <th>Model</th><th>Developer</th><th>Host</th><th>Offering name</th><th>Lifecycle</th>
-    <th>Input $/1M</th><th>Output $/1M</th><th>Tools</th><th>JSON schema</th>
+    <th>Input $/1M</th><th>Output $/1M</th><th>Context window</th><th>Tools</th><th>JSON schema</th>
   </tr>
   {% for r in rows %}
   <tr>
@@ -39,6 +39,7 @@
     </td>
     <td>{{ "$%.3f"|format(r.input_price) if r.input_price is not none else "—" }}</td>
     <td>{{ "$%.3f"|format(r.output_price) if r.output_price is not none else "—" }}</td>
+    <td class="mono">{{ "{:,}".format(r.context_window) if r.context_window is not none else "—" }}</td>
     <td>{% if r.tool_calling == true %}✓{% elif r.tool_calling == false %}✗{% else %}<span class="muted">?</span>{% endif %}</td>
     <td>{% if r.json_schema == true %}✓{% elif r.json_schema == false %}✗{% else %}<span class="muted">?</span>{% endif %}</td>
   </tr>

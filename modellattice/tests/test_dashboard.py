@@ -68,6 +68,23 @@ def test_offerings_list_search(client, db_session):
     assert "Test Model" not in r2.text
 
 
+def test_offerings_list_shows_context_window(client, db_session):
+    offering = _seed_one_offering(db_session)
+    offering.limits = {"max_context_tokens": 128000}
+    db_session.commit()
+
+    r = client.get("/dashboard/offerings")
+    assert r.status_code == 200
+    assert "128,000" in r.text
+
+
+def test_offerings_list_context_window_blank_when_unknown(client, db_session):
+    _seed_one_offering(db_session)  # no .limits set
+    r = client.get("/dashboard/offerings")
+    assert r.status_code == 200
+    assert "Context window" in r.text  # column header present even with no data
+
+
 def test_offering_detail_renders(client, db_session):
     offering = _seed_one_offering(db_session)
     r = client.get(f"/dashboard/offerings/{offering.id}")
