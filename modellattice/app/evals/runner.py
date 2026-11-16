@@ -1,9 +1,19 @@
-"""The evaluation runner itself (v0.2 Section 12, weeks 5-6: "Evaluation
-runner. First two task profiles live."). Ties together a task bank, a
-deterministic scorer, a real model client, and the database: writes
-EvalRun/EvalResult rows for every task actually executed, then a single
-aggregate `task_quality_score` Measurement with a confidence interval -
-never a fabricated score for a model that was never actually called.
+"""The evaluation runner itself (v0.2 Section 12, weeks 5-6). Ties
+together a task bank, a scorer, one or two real model clients, and the
+database: writes EvalRun/EvalResult rows for every task actually
+executed, then a single aggregate `task_quality_score` Measurement with
+a confidence interval - never a fabricated score for a model that was
+never actually called.
+
+Five task profiles, three scoring kinds:
+- "text": structured-extraction - deterministic JSON/F1 scoring.
+- "code": code-edit - a real pytest subprocess run.
+- "tools": tool-use-agent - deterministic check of the actual function
+  call emitted, no judge needed.
+- "judge": rag-qa, summarization - a SEPARATE judge model (never the
+  candidate itself) rates the candidate's completion against a rubric
+  (v0.2 Section 9: "judge models come from a different provider than
+  the candidate where possible").
 """
 import dataclasses
 import datetime as dt
@@ -17,7 +27,13 @@ from app.config import get_settings
 from app.evals import scorers
 from app.evals.model_client import CompletionResult
 from app.evals.stats import confidence_interval
-from app.evals.tasks import code_edit_v1, structured_extraction_v1
+from app.evals.tasks import (
+    code_edit_v1,
+    rag_qa_v1,
+    structured_extraction_v1,
+    summarization_v1,
+    tool_use_agent_v1,
+)
 from app.models.catalog import Offering
 from app.models.evaluation import EvalResult, EvalRun
 from app.models.measurement import EvidenceSource, Measurement
@@ -35,13 +51,21 @@ class UnknownTaskProfileError(RuntimeError):
     pass
 
 
+class JudgeRequiredError(RuntimeError):
+    pass
+
+
 class ModelClientProtocol(typing.Protocol):
     def complete(self, system: str, user: str, max_tokens: int = 1024) -> CompletionResult: ...
+    def complete_with_tools(self, system: str, user: str, tools: list[dict], max_tokens: int = 512) -> CompletionResult: ...
 
 
 _PROFILES = {
-    "structured-extraction": structured_extraction_v1,
-    "code-edit": code_edit_v1,
+    "structured-extraction": (structured_extraction_v1, "text"),
+    "code-edit": (code_edit_v1, "code"),
+    "tool-use-agent": (tool_use_agent_v1, "tools"),
+    "rag-qa": (rag_qa_v1, "judge"),
+    "summarization": (summarization_v1, "judge"),
 }
 
 
@@ -84,27 +108,47 @@ class RunReport:
     measurement_id: uuid.UUID | None
 
 
+def _score_one_task(
+    task_profile_key: str, module, task: dict, completion: CompletionResult,
+) -> scorers.ScoreResult:
+    if task_profile_key == "structured-extraction":
+        return scorers.score_structured_extraction(completion.text, module.SCHEMA, task["gold"])
+    if task_profile_key == "code-edit":
+        return scorers.score_code_edit(completion.text, task["test_code"])
+    if task_profile_key == "tool-use-agent":
+        return scorers.score_tool_use(completion.tool_calls, task["expected_tool"], task["expected_args"])
+    raise UnknownTaskProfileError(f"{task_profile_key!r} has no non-judge scorer")
+
+
 def run_evaluation(
     db: Session,
     offering: Offering,
     task_profile_key: str,
     task_profile_version: int,
     client: ModelClientProtocol,
+    judge_client: ModelClientProtocol | None = None,
+    judge_offering: Offering | None = None,
     max_run_budget_usd: float | None = None,
 ) -> RunReport:
     if task_profile_key not in _PROFILES:
         raise UnknownTaskProfileError(f"no task bank implemented for {task_profile_key!r}")
+    module, kind = _PROFILES[task_profile_key]
+
+    if kind == "judge" and (judge_client is None or judge_offering is None):
+        raise JudgeRequiredError(
+            f"{task_profile_key!r} is judge-scored and requires a separate judge_client + judge_offering "
+            "(never the candidate itself - v0.2 Section 9)"
+        )
 
     settings = get_settings()
     max_run_budget_usd = max_run_budget_usd if max_run_budget_usd is not None else settings.eval_max_run_budget_usd
     check_budget(db, max_run_budget_usd)
 
-    module = _PROFILES[task_profile_key]
     now = dt.datetime.now(dt.timezone.utc)
-
     run = EvalRun(
         task_profile_key=task_profile_key, task_profile_version=task_profile_version, offering_id=offering.id,
-        judge=None, budget_usd=max_run_budget_usd, started_at=now,
+        judge=judge_offering.provider_model_name if judge_offering else None,
+        budget_usd=max_run_budget_usd, started_at=now,
     )
     db.add(run)
     db.flush()
@@ -114,20 +158,40 @@ def run_evaluation(
     total_spent = 0.0
 
     for task in module.TASKS:
-        completion = client.complete(system=module.SYSTEM_PROMPT, user=task.get("prompt") or task.get("text"))
+        if kind == "tools":
+            completion = client.complete_with_tools(
+                system=module.SYSTEM_PROMPT, user=task["prompt"], tools=module.TOOLS,
+            )
+        else:
+            user_text = task.get("prompt") or task.get("text")
+            if kind == "judge" and task_profile_key == "rag-qa":
+                user_text = f"Passage:\n{task['passage']}\n\nQuestion: {task['question']}"
+            elif kind == "judge" and task_profile_key == "summarization":
+                user_text = f"Document:\n{task['document']}\n\n(Limit: {task['max_words']} words.)"
+            completion = client.complete(system=module.SYSTEM_PROMPT, user=user_text)
 
         if completion.error:
             db.add(EvalResult(eval_run_id=run.id, task_id=task["id"], score=0.0, passed=False, cost_usd=0.0, latency_ms=completion.latency_ms, raw={"error": completion.error}))
             scores.append(0.0)
             continue
 
-        if task_profile_key == "structured-extraction":
-            result = scorers.score_structured_extraction(completion.text, structured_extraction_v1.SCHEMA, task["gold"])
-        else:
-            result = scorers.score_code_edit(completion.text, task["test_code"])
-
         call_cost = _estimate_call_cost(offering, db, completion.prompt_tokens, completion.completion_tokens) or 0.0
         total_spent += call_cost
+
+        if kind == "judge":
+            judge_prompt = module.build_judge_prompt(task, completion.text)
+            judge_completion = judge_client.complete(system=scorers.JUDGE_SYSTEM_PROMPT, user=judge_prompt)
+            if judge_completion.error:
+                result = scorers.ScoreResult(score=0.0, passed=False, detail={"error": f"judge_error: {judge_completion.error}"})
+            else:
+                judge_cost = _estimate_call_cost(judge_offering, db, judge_completion.prompt_tokens, judge_completion.completion_tokens) or 0.0
+                total_spent += judge_cost
+                result = scorers.score_via_judge(judge_completion.text)
+                result.detail["candidate_answer"] = completion.text[:500]
+                result.detail["same_provider_as_candidate"] = judge_offering.provider_id == offering.provider_id
+        else:
+            result = _score_one_task(task_profile_key, module, task, completion)
+
         scores.append(result.score)
         passes += int(result.passed)
 
@@ -151,7 +215,8 @@ def run_evaluation(
         evidence = EvidenceSource(
             type=EvidenceType.PLATFORM_EVAL.value,
             uri=f"eval_run:{run.id}",
-            method=f"ModelLattice evaluation runner: {task_profile_key}@{task_profile_version}",
+            method=f"ModelLattice evaluation runner: {task_profile_key}@{task_profile_version}"
+            + (f" (judge: {judge_offering.provider_model_name})" if judge_offering else ""),
             collected_at=now,
         )
         db.add(evidence)

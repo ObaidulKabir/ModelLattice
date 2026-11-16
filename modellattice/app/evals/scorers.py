@@ -152,3 +152,94 @@ def _cleanup(path: Path) -> None:
     import shutil
 
     shutil.rmtree(path, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------
+# tool-use-agent: deterministic check of the actual tool call emitted
+# ---------------------------------------------------------------------
+
+_OPERATION_SYNONYMS = {
+    "add": {"add", "addition", "+", "sum"},
+    "subtract": {"subtract", "subtraction", "-", "minus"},
+    "multiply": {"multiply", "multiplication", "*", "x", "times"},
+    "divide": {"divide", "division", "/"},
+}
+_COMMUTATIVE_ARG_PAIRS = {("add", "a", "b"), ("multiply", "a", "b")}
+
+
+def _arg_matches(key: str, actual, expected, operation: str | None) -> bool:
+    if key == "operation":
+        syn = _OPERATION_SYNONYMS.get(str(expected).lower(), {str(expected).lower()})
+        return str(actual).strip().lower() in syn
+    if isinstance(expected, (int, float)) and not isinstance(expected, bool):
+        try:
+            return abs(float(actual) - float(expected)) < 1e-6
+        except (TypeError, ValueError):
+            return False
+    return str(actual).strip().lower() == str(expected).strip().lower()
+
+
+def score_tool_use(tool_calls: list[dict] | None, expected_tool: str, expected_args: dict) -> ScoreResult:
+    if not tool_calls:
+        return ScoreResult(score=0.0, passed=False, detail={"error": "no_tool_call_emitted"})
+
+    call = tool_calls[0]  # only the first call matters for these single-step tasks
+    if call.get("name") != expected_tool:
+        return ScoreResult(
+            score=0.0, passed=False,
+            detail={"error": "wrong_tool", "called": call.get("name"), "expected": expected_tool},
+        )
+
+    actual_args = call.get("arguments") or {}
+    operation = actual_args.get("operation")
+    matched = sum(
+        1 for k, v in expected_args.items() if k in actual_args and _arg_matches(k, actual_args[k], v, operation)
+    )
+
+    # Addition/multiplication are commutative - swapped a/b still counts as
+    # a full match rather than being penalized for argument order.
+    if matched < len(expected_args) and "a" in expected_args and "b" in expected_args:
+        if (operation, "a", "b") in _COMMUTATIVE_ARG_PAIRS or any(
+            (expected_args.get("operation"), "a", "b") == pair for pair in _COMMUTATIVE_ARG_PAIRS
+        ):
+            swapped_ok = _arg_matches("a", actual_args.get("a"), expected_args.get("b"), operation) and _arg_matches(
+                "b", actual_args.get("b"), expected_args.get("a"), operation
+            )
+            if swapped_ok:
+                matched = len(expected_args)
+
+    score = matched / len(expected_args) if expected_args else 1.0
+    return ScoreResult(
+        score=score, passed=score >= 0.999,
+        detail={"called": call.get("name"), "actual_args": actual_args, "expected_args": expected_args, "matched": matched, "total": len(expected_args)},
+    )
+
+
+# ---------------------------------------------------------------------
+# rag-qa / summarization: LLM-judge rubric scoring (the only scorer here
+# that is NOT fully deterministic - see runner.py for the cross-provider
+# judge requirement, v0.2 Section 9).
+# ---------------------------------------------------------------------
+
+JUDGE_SYSTEM_PROMPT = (
+    "You are a strict, impartial grading assistant. You will be given a grading "
+    "rubric and a candidate answer. Respond with ONLY a single JSON object: "
+    '{"score": <number 0.0-1.0>, "reasoning": "<one short sentence>"} - no '
+    "markdown fences, no other text."
+)
+
+
+def score_via_judge(judge_completion_text: str) -> ScoreResult:
+    """Parses the judge model's own completion (already obtained by the
+    caller via a judge ModelClient) into a ScoreResult. Kept separate from
+    the HTTP call so this function is itself deterministic and testable
+    with a canned judge response."""
+    raw = _strip_code_fences(judge_completion_text)
+    try:
+        parsed = json.loads(raw)
+        score = float(parsed["score"])
+    except (json.JSONDecodeError, ValueError, KeyError, TypeError):
+        return ScoreResult(score=0.0, passed=False, detail={"error": "invalid_judge_response", "raw": raw[:500]})
+
+    score = max(0.0, min(1.0, score))
+    return ScoreResult(score=score, passed=score >= 0.7, detail={"reasoning": parsed.get("reasoning"), "judge_raw": raw[:1000]})

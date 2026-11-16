@@ -60,21 +60,34 @@ scripts/repair_model_identity.py  One-time (idempotent) cleanup for a real
   commit; a clean run_connectors afterward creates no duplicates).
 migrations/       Alembic migrations (Postgres is the system of record).
 app/evals/
-  tasks/            Real task banks: structured_extraction_v1.py (5 JSON-
-                    extraction tasks with gold answers) and code_edit_v1.py
-                    (loads 3 genuinely buggy Python files + real pytest
-                    tests from app/evals/data/code_edit_v1/).
-  scorers.py        Deterministic scoring: JSON schema + field-level F1
-                    for extraction; an actual pytest subprocess run
-                    (sandboxed temp dir, timeout, isolated Python) for
-                    code-edit - never a simulated pass/fail.
-  model_client.py   Real OpenRouter chat-completions client. Refuses to
-                    run (NoLiveKeyError) rather than reuse an unrelated
-                    API key already present in the environment.
+  tasks/            Real task banks, one module per profile:
+                    structured_extraction_v1.py (5 JSON-extraction tasks),
+                    code_edit_v1.py (3 genuinely buggy Python files + real
+                    pytest tests from app/evals/data/code_edit_v1/),
+                    tool_use_agent_v1.py (3 function-calling tasks with a
+                    real OpenAI-compatible `tools` schema),
+                    rag_qa_v1.py / summarization_v1.py (judge-scored;
+                    each also builds its own judge rubric prompt).
+  scorers.py        Deterministic scoring for the first three profiles:
+                    JSON schema + field-level F1, an actual pytest
+                    subprocess run (sandboxed temp dir, timeout, isolated
+                    Python), and an exact/synonym/commutative-aware check
+                    of the real function call emitted. Plus
+                    score_via_judge() for the other two, which only
+                    parses an already-obtained judge completion - the
+                    HTTP call itself lives in model_client.py.
+  model_client.py   Real OpenRouter chat-completions client (text and,
+                    for tool-use-agent, function-calling). Refuses to run
+                    (NoLiveKeyError) rather than reuse an unrelated API
+                    key already present in the environment.
   stats.py          Confidence interval over an eval run's scores.
-  runner.py         Ties it together: weekly + per-run budget caps,
-                    EvalRun/EvalResult writes, aggregate task_quality_score
-                    Measurement with CI and S2/S3 maturity.
+  runner.py         Ties it together per profile kind (text/code/tools/
+                    judge): weekly + per-run budget caps (covering BOTH
+                    the candidate's and, where used, the judge's call
+                    cost), EvalRun/EvalResult writes, aggregate
+                    task_quality_score Measurement with CI and S2/S3
+                    maturity. Raises JudgeRequiredError rather than let a
+                    judge-scored profile fall back to self-grading.
 scripts/
   seed.py           Illustrative dev data: 3 providers, 4 offerings,
                     pricing, one eval per offering, relationships.
@@ -132,10 +145,42 @@ is called. Deliberately never reuses `OPENAI_API_KEY` or any other key
 that happens to be set in a shared environment; it looks only for
 `OPENROUTER_API_KEY`, since OpenRouter is the one connector this MVP has.
 
-`scripts.run_eval` only works against `OpenRouter`-hosted offerings and
-only for `structured-extraction` and `code-edit` (the two deterministic
-profiles implemented so far - `rag-qa`, `tool-use-agent` and
-`summarization` need an LLM-judge scorer, a week 6 item).
+`scripts.run_eval` only works against `OpenRouter`-hosted offerings. All
+five task profiles are implemented:
+
+| Profile | Scoring | Needs a judge? |
+|---|---|---|
+| `structured-extraction` | JSON schema + field-level F1 | No |
+| `code-edit` | Real pytest subprocess execution | No |
+| `tool-use-agent` | Deterministic check of the actual function call emitted (OpenAI-compatible `tools`) | No |
+| `rag-qa` | Correctness + groundedness | Yes - a separate model, never the candidate |
+| `summarization` | Coverage/faithfulness/concision rubric | Yes - a separate model, never the candidate |
+
+`rag-qa` and `summarization` require `--judge-provider-model-name` (or
+`--judge-offering`): a second offering, in keeping with v0.2 Section 9
+("judge models come from a different provider than the candidate where
+possible"). `run_evaluation()` refuses with `JudgeRequiredError` if a
+judge-scored profile is requested without one - it never lets a model
+grade itself.
+
+All five were run live against real free-tier OpenRouter models while
+building this (not just the fixture-client tests): `tool-use-agent`
+emitted exactly the expected function call and arguments; `rag-qa`'s
+candidate answered all three questions correctly and the judge's
+reasoning matched; `code-edit`/`structured-extraction` results are in
+the PR history. Several free-tier `429`/`403` responses were hit along
+the way - all correctly caught and recorded as evidence rather than
+crashing or being misread as a model failure.
+
+**A real limitation found live, not a bug**: one reasoning-enabled free
+model returned an EMPTY summarization answer after 7-10 seconds of
+latency - it spent its entire `max_tokens` budget on internal reasoning
+before ever emitting visible text. The judge correctly still scored it
+(no unsupported claims, trivially concise, but zero coverage) rather
+than erroring. Worth knowing before trusting a low score from a
+reasoning-capable model: raising `max_tokens` or disabling that model's
+reasoning mode (where the provider supports it) is the fix, not yet
+wired into `model_client.py`.
 
 ### Deriving relationships
 

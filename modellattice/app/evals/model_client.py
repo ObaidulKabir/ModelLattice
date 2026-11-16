@@ -12,6 +12,7 @@ configured, so the runner refuses to proceed rather than writing fake
 "evaluated" evidence into the measurement tensor.
 """
 import dataclasses
+import json
 import time
 
 import httpx
@@ -34,6 +35,7 @@ class CompletionResult:
     completion_tokens: int | None
     latency_ms: int
     error: str | None = None
+    tool_calls: list[dict] | None = None  # [{"name": str, "arguments": dict}] when tools were offered
 
 
 class OpenRouterClient:
@@ -43,37 +45,88 @@ class OpenRouterClient:
         self.api_key = api_key
         self.model_name = model_name
 
-    def complete(self, system: str, user: str, max_tokens: int = 1024, timeout: float = 60.0) -> CompletionResult:
+    def _post(self, body: dict, timeout: float) -> tuple[dict | None, CompletionResult | None]:
+        """Returns (response_json, None) on success or (None, error_result)
+        on failure, so callers don't duplicate the try/except."""
         started = time.monotonic()
         try:
             resp = httpx.post(
                 self.BASE_URL,
                 headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-                json={
-                    "model": self.model_name,
-                    "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                    "max_tokens": max_tokens,
-                    "temperature": 0,
-                },
+                json=body,
                 timeout=timeout,
             )
-            latency_ms = int((time.monotonic() - started) * 1000)
             resp.raise_for_status()
-            data = resp.json()
-            text = data["choices"][0]["message"]["content"] or ""
-            usage = data.get("usage") or {}
-            return CompletionResult(
-                text=text,
-                prompt_tokens=usage.get("prompt_tokens"),
-                completion_tokens=usage.get("completion_tokens"),
-                latency_ms=latency_ms,
-            )
+            return resp.json(), None
         except httpx.HTTPStatusError as e:
             latency_ms = int((time.monotonic() - started) * 1000)
-            return CompletionResult(text="", prompt_tokens=None, completion_tokens=None, latency_ms=latency_ms, error=f"http {e.response.status_code}: {e.response.text[:300]}")
+            return None, CompletionResult(text="", prompt_tokens=None, completion_tokens=None, latency_ms=latency_ms, error=f"http {e.response.status_code}: {e.response.text[:300]}")
         except httpx.HTTPError as e:
             latency_ms = int((time.monotonic() - started) * 1000)
-            return CompletionResult(text="", prompt_tokens=None, completion_tokens=None, latency_ms=latency_ms, error=str(e))
+            return None, CompletionResult(text="", prompt_tokens=None, completion_tokens=None, latency_ms=latency_ms, error=str(e))
+
+    def complete(self, system: str, user: str, max_tokens: int = 1024, timeout: float = 60.0) -> CompletionResult:
+        started = time.monotonic()
+        data, err = self._post(
+            {
+                "model": self.model_name,
+                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                "max_tokens": max_tokens,
+                "temperature": 0,
+            },
+            timeout,
+        )
+        latency_ms = int((time.monotonic() - started) * 1000)
+        if err:
+            err.latency_ms = latency_ms
+            return err
+        text = data["choices"][0]["message"]["content"] or ""
+        usage = data.get("usage") or {}
+        return CompletionResult(
+            text=text, prompt_tokens=usage.get("prompt_tokens"), completion_tokens=usage.get("completion_tokens"),
+            latency_ms=latency_ms,
+        )
+
+    def complete_with_tools(
+        self, system: str, user: str, tools: list[dict], max_tokens: int = 512, timeout: float = 60.0,
+    ) -> CompletionResult:
+        """Like `complete`, but offers a function-calling `tools` schema
+        (OpenAI-compatible) and returns any tool calls the model made,
+        parsed into {"name", "arguments"} dicts. Used only by the
+        tool-use-agent profile, which scores deterministically against
+        the expected call - no judge model involved."""
+        started = time.monotonic()
+        data, err = self._post(
+            {
+                "model": self.model_name,
+                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                "tools": tools,
+                "tool_choice": "auto",
+                "max_tokens": max_tokens,
+                "temperature": 0,
+            },
+            timeout,
+        )
+        latency_ms = int((time.monotonic() - started) * 1000)
+        if err:
+            err.latency_ms = latency_ms
+            return err
+
+        message = data["choices"][0]["message"]
+        usage = data.get("usage") or {}
+        tool_calls = []
+        for call in message.get("tool_calls") or []:
+            fn = call.get("function") or {}
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+            except (json.JSONDecodeError, ValueError):
+                args = {"_unparsed": fn.get("arguments")}
+            tool_calls.append({"name": fn.get("name"), "arguments": args})
+
+        return CompletionResult(
+            text=message.get("content") or "", prompt_tokens=usage.get("prompt_tokens"),
+            completion_tokens=usage.get("completion_tokens"), latency_ms=latency_ms, tool_calls=tool_calls,
+        )
 
 
 def build_client_for_offering(provider_name: str, provider_model_name: str) -> OpenRouterClient:
