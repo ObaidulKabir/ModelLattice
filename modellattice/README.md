@@ -25,8 +25,15 @@ app/
   main.py         App entrypoint.
 mcp_server/
   server.py       MCP tools (find_models, recommend_model, compare_models,
-                  estimate_cost, get_alternatives, report_outcome), calling
-                  the same service layer as the REST API.
+                  estimate_cost, get_alternatives, report_outcome,
+                  check_regression), calling the same service layer as
+                  the REST API.
+app/monitoring/regression.py  Latency and error-rate regression
+  detection (v0.2 Section 12, week 10) from two real evidence sources
+  (eval history, UMFR feedback), kept as independent axes - a judge
+  scoring a candidate poorly is a quality result, never counted as a
+  reliability error. GET /v1/offerings/{id}/regression. Returns
+  insufficient_data rather than a verdict when either window is too thin.
 app/connectors/
   base.py         Shared pipeline: identity resolution, price history
                   (never overwritten - old row closed, new row opened),
@@ -181,6 +188,23 @@ than erroring. Worth knowing before trusting a low score from a
 reasoning-capable model: raising `max_tokens` or disabling that model's
 reasoning mode (where the provider supports it) is the fix, not yet
 wired into `model_client.py`.
+
+### Checking for regressions
+
+```bash
+curl "http://127.0.0.1:8008/v1/offerings/<id>/regression?task_profile=structured-extraction@1&window_minutes=60"
+```
+
+Compares the most recent window of real evidence (eval history and/or
+UMFR feedback, `source=eval|feedback|both`) against the window
+immediately before it, on two independent axes: mean latency (D08) and
+error rate (D09 - an operational failure, never a low quality score).
+With fewer than 3 real samples in either window it reports
+`insufficient_data: true` rather than asserting a regression or its
+absence. Verified against the real nemotron-3.5-lightning:free eval
+history from this session's live runs (see git history) - a genuine,
+correctly-computed result once the comparison window was positioned
+over the actual data.
 
 ### Deriving relationships
 

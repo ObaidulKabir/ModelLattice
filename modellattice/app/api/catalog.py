@@ -1,5 +1,7 @@
-"""GET /v1/models, /v1/offerings, /v1/compare, /v1/alternatives and
-POST /v1/estimate-cost (v0.2 Section 8.1)."""
+"""GET /v1/models, /v1/offerings, /v1/compare, /v1/alternatives,
+/v1/offerings/{id}/regression and POST /v1/estimate-cost (v0.2 Section
+8.1)."""
+import datetime as dt
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -8,6 +10,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.db import get_db
 from app.models.catalog import Model, Offering
+from app.monitoring.regression import check_regression
 from app.schemas.catalog import ModelOut, OfferingOut, PricePointOut
 from app.services.alternatives import find_alternatives
 from app.services.cost import estimate_cost_per_1k_tasks, get_current_prices
@@ -58,6 +61,39 @@ def offering_prices(offering_id: uuid.UUID, db: Session = Depends(get_db)):
     if not prices:
         return []
     return list(prices.values())
+
+
+@router.get("/offerings/{offering_id}/regression")
+def offering_regression(
+    offering_id: uuid.UUID,
+    task_profile: str | None = Query(default=None, description="e.g. 'structured-extraction@1'; omit to pool all profiles"),
+    window_minutes: int | None = Query(default=None, description="Override the default 7-day window, for recent/dense evidence"),
+    source: str = Query(default="both", pattern="^(eval|feedback|both)$"),
+    db: Session = Depends(get_db),
+):
+    """Latency and error-rate regression check (v0.2 Section 12, week 10;
+    v0.1 Section 11.1 step 8 'Monitor'). Compares the most recent window
+    of real evidence against the window before it; returns
+    insufficient_data rather than a guess when either window is thin."""
+    offering = db.get(Offering, offering_id)
+    if offering is None:
+        raise HTTPException(status_code=404, detail="offering not found")
+
+    window = dt.timedelta(minutes=window_minutes) if window_minutes else dt.timedelta(days=7)
+    result = check_regression(db, offering_id, task_profile=task_profile, window=window, source=source)
+    return {
+        "offering_id": offering_id,
+        "task_profile": task_profile,
+        "window_seconds": result.window.total_seconds(),
+        "baseline": {"n": result.baseline.n, "mean_latency_ms": result.baseline.mean_latency_ms, "error_rate": result.baseline.error_rate},
+        "recent": {"n": result.recent.n, "mean_latency_ms": result.recent.mean_latency_ms, "error_rate": result.recent.error_rate},
+        "latency_change_pct": result.latency_change_pct,
+        "error_rate_change": result.error_rate_change,
+        "latency_regression": result.latency_regression,
+        "error_rate_regression": result.error_rate_regression,
+        "insufficient_data": result.insufficient_data,
+        "reasons": result.reasons,
+    }
 
 
 @router.get("/compare")

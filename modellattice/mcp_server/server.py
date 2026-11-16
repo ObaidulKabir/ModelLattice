@@ -221,5 +221,33 @@ def report_outcome(
         db.close()
 
 
+@mcp.tool()
+def check_regression(
+    offering_id: str, task_profile: str | None = None, window_minutes: int | None = None, source: str = "both",
+) -> dict:
+    """Check an offering for a latency or error-rate regression (v0.2
+    Section 12, week 10): compares the most recent window of real
+    evidence (eval history and/or UMFR feedback) against the window
+    before it. Returns insufficient_data rather than a guess when either
+    window is too thin."""
+    db = SessionLocal()
+    try:
+        from app.monitoring.regression import check_regression as _check
+
+        window = dt.timedelta(minutes=window_minutes) if window_minutes else dt.timedelta(days=7)
+        result = _check(db, uuid.UUID(offering_id), task_profile=task_profile, window=window, source=source)
+        return {
+            "offering_id": offering_id,
+            "baseline": {"n": result.baseline.n, "mean_latency_ms": result.baseline.mean_latency_ms, "error_rate": result.baseline.error_rate},
+            "recent": {"n": result.recent.n, "mean_latency_ms": result.recent.mean_latency_ms, "error_rate": result.recent.error_rate},
+            "latency_regression": result.latency_regression,
+            "error_rate_regression": result.error_rate_regression,
+            "insufficient_data": result.insufficient_data,
+            "reasons": result.reasons,
+        }
+    finally:
+        db.close()
+
+
 if __name__ == "__main__":
     mcp.run()
