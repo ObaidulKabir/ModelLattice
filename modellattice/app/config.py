@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     # against OpenRouter-hosted offerings.
     openrouter_api_key: str | None = None
 
+    # Periodic refresh (app/scheduler.py). Deliberately does NOT include
+    # the evaluation runner: that spends real money per call and stays a
+    # deliberate, explicit action (scripts/run_eval.py), never an
+    # automatic background one.
+    connector_refresh_interval_hours: float = 6.0
+    scheduler_run_immediately_on_start: bool = True
+
     @property
     def write_keys(self) -> set[str]:
         return {k.strip() for k in self.api_write_keys.split(",") if k.strip()}

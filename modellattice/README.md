@@ -95,10 +95,24 @@ app/evals/
                     task_quality_score Measurement with CI and S2/S3
                     maturity. Raises JudgeRequiredError rather than let a
                     judge-scored profile fall back to self-grading.
+app/connectors/registry.py  The one list of registered connectors, and
+  run_connector()/run_all_connectors() - fetch+ingest with the error
+  captured in the result rather than raised, so one connector's failure
+  (network, provider outage, a changed page format) never blocks the
+  others. Shared by the CLI and the scheduler below; adding a new
+  connector (e.g. a future direct-from-provider one) is one dict entry.
+app/scheduler.py  Periodic refresh: runs every registered connector,
+  then re-derives relationships, on a fixed interval
+  (CONNECTOR_REFRESH_INTERVAL_HOURS, default 6). Deliberately does NOT
+  schedule the evaluation runner - that spends real money per call and
+  stays a deliberate, explicit action with its own budget caps, never
+  something a timer triggers unattended.
 scripts/
   seed.py           Illustrative dev data: 3 providers, 4 offerings,
                     pricing, one eval per offering, relationships.
-  run_connectors.py  CLI to run a connector and print an ingest summary.
+  run_connectors.py  CLI to run a connector once and print an ingest summary.
+  scheduler_daemon.py  Long-running process wrapping app/scheduler.py -
+                    run it as its own service, separate from the web app.
   run_eval.py        CLI to run a REAL evaluation against a live offering.
 tests/            pytest suite against an in-memory SQLite DB (23 tests).
 ```
@@ -188,6 +202,35 @@ than erroring. Worth knowing before trusting a low score from a
 reasoning-capable model: raising `max_tokens` or disabling that model's
 reasoning mode (where the provider supports it) is the fix, not yet
 wired into `model_client.py`.
+
+### Keeping the catalog fresh automatically
+
+```bash
+./.venv/Scripts/python.exe -m scripts.scheduler_daemon
+```
+
+Runs until stopped (Ctrl+C): refreshes every registered connector, then
+re-derives relationships, every `CONNECTOR_REFRESH_INTERVAL_HOURS`
+(default 6; set in `.env`). Runs once immediately on start by default
+(`SCHEDULER_RUN_IMMEDIATELY_ON_START=false` to disable that). One
+connector failing - a network error, a provider outage, a page that
+changed shape - is logged and skipped; it never stops the others or
+crashes the process. Verified live: a real run against the current
+OpenRouter catalog picked up a genuine price change since the last
+manual run and logged it correctly (see git history).
+
+This is a separate, long-running process from the web app (`app.main`)
+on purpose - so scaling API workers never risks the same refresh job
+firing twice at once. For production, run it as its own systemd unit,
+Windows Task Scheduler entry, or container; not built here, since this
+MVP runs everything from one dev machine.
+
+**Deliberately excluded**: the evaluation runner. It spends real money
+per call, so it stays `scripts/run_eval.py` - an explicit, one-at-a-time
+action with its own budget caps, never something a timer fires on its
+own. Scheduling it would need its own deliberate design (which
+offerings/profiles to prioritize out of hundreds, how to bound total
+spend across a whole run) - a real follow-up, not bundled in here.
 
 ### Checking for regressions
 
