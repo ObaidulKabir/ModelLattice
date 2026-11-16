@@ -62,6 +62,11 @@ class EvidenceType(str, enum.Enum):
     PLATFORM_EVAL = "platform_eval"
     TELEMETRY = "telemetry"
     THIRD_PARTY = "third_party"
+    # Computed by the platform itself from other evidence already on file
+    # (e.g. a naming-convention heuristic, or a comparison of two
+    # measurements) - distinct from PLATFORM_EVAL, which is a model
+    # actually being called. Lower default confidence than a real eval.
+    DERIVED_INFERENCE = "derived_inference"
 
 
 class PriceType(str, enum.Enum):

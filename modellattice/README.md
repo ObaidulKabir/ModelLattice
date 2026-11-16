@@ -37,6 +37,18 @@ app/connectors/
                   (~470 offerings across ~60 developers, with live pricing
                   and feature flags). No API key to manage.
   developer_map.py  Id-prefix -> developer display name (governed data).
+app/relationships/infer.py  UMRG v0 relationship inference: naming-
+  convention tiers (Pro/Mini/Nano/Lite suffix, Anthropic's Haiku/Sonnet/
+  Opus line) and evidence-derived substitution (two offerings evaluated
+  on the same task profile with close scores). Both upsert by
+  (type, source_id, target_id), so re-runs update rather than duplicate.
+  Deliberately does NOT invent cross-developer "A substitutes B" claims
+  with no evaluation behind them.
+app/services/alternatives.py  Bidirectional relationship traversal
+  (v0.1 Section 6.3), shared by GET /v1/alternatives and the MCP
+  get_alternatives tool - an edge A->B is traversable from B's side too,
+  using the independently-worded reverse_profile.
+scripts/derive_relationships.py  CLI to run both inference methods.
 scripts/repair_model_identity.py  One-time (idempotent) cleanup for a real
   data bug found after the first live connector runs: OpenRouter's
   ":free"/":batch" commercial-tier variants (100 of 468 offerings) had
@@ -124,6 +136,25 @@ that happens to be set in a shared environment; it looks only for
 only for `structured-extraction` and `code-edit` (the two deterministic
 profiles implemented so far - `rag-qa`, `tool-use-agent` and
 `summarization` need an LLM-judge scorer, a week 6 item).
+
+### Deriving relationships
+
+```bash
+./.venv/Scripts/python.exe -m scripts.derive_relationships
+```
+
+Run this after the connector (new offerings may complete a tier family)
+or after an eval run (new quality measurements may reveal a close-score
+pair). Against the real catalog this currently writes real tier edges
+(e.g. GPT-5 <-> GPT-5 Mini <-> GPT-5 Nano, GPT-5 <-> GPT-5 Pro, Claude
+Haiku <-> Sonnet <-> Opus per version) at confidence 0.6 (a naming
+heuristic, not a provider confirmation), plus substitution edges wherever
+two offerings have real measured scores within 0.10 of each other on the
+same task profile, at a confidence that scales with how close the scores
+are and how much sample size backs them. `GET /v1/alternatives/{id}`
+(and the MCP `get_alternatives` tool) surface these from either side of
+the edge correctly - the direction and wording differ (forward vs
+reverse), never assumed symmetric.
 
 Run the MCP server (stdio) instead of/alongside the REST API:
 

@@ -8,9 +8,8 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.db import get_db
 from app.models.catalog import Model, Offering
-from app.models.relationship import Relationship
-from app.models.types import RelationshipType
 from app.schemas.catalog import ModelOut, OfferingOut, PricePointOut
+from app.services.alternatives import find_alternatives
 from app.services.cost import estimate_cost_per_1k_tasks, get_current_prices
 from app.services.recommender import evaluate_offerings
 
@@ -91,51 +90,13 @@ def compare_offerings(
 @router.get("/alternatives/{offering_id}")
 def alternatives(offering_id: uuid.UUID, db: Session = Depends(get_db)):
     """Substitutes, tier up/down and lineage relationships for an offering
-    (v0.1 Section 6; v0.2 Section 5.2). Relationship rows store Model- or
-    Offering-level subjects; here we surface both pointing at this offering
-    or its underlying model."""
+    (v0.1 Section 6; v0.2 Section 5.2). See app/services/alternatives.py
+    for the bidirectional-traversal logic (v0.1 Section 6.3), shared with
+    the MCP get_alternatives tool."""
     offering = db.get(Offering, offering_id)
     if offering is None:
         raise HTTPException(status_code=404, detail="offering not found")
-
-    subject_ids = {offering.id, offering.model_id}
-    rels = (
-        db.execute(
-            select(Relationship).where(
-                Relationship.source_id.in_(subject_ids), Relationship.lifecycle_status == "active"
-            )
-        )
-        .scalars()
-        .all()
-    )
-    if not rels:
-        return {"offering_id": offering_id, "alternatives": []}
-
-    target_ids = [r.target_id for r in rels]
-    candidates_by_id = {c.offering.id: c for c in evaluate_offerings(db, target_ids, None)}
-
-    out = []
-    for r in rels:
-        cand = candidates_by_id.get(r.target_id)
-        out.append(
-            {
-                "relationship_type": r.type,
-                "confidence": r.confidence,
-                "forward_profile": r.forward_profile,
-                "target_offering_id": r.target_id if cand else None,
-                "target": (
-                    {
-                        "provider_name": cand.provider_name,
-                        "model_name": cand.model_name,
-                        "est_cost_per_1k_tasks_usd": cand.cost_per_1k_tasks_usd,
-                        "quality_score": cand.quality_score,
-                    }
-                    if cand
-                    else None
-                ),
-            }
-        )
-    return {"offering_id": offering_id, "alternatives": out}
+    return {"offering_id": offering_id, "alternatives": find_alternatives(db, offering)}
 
 
 @router.post("/estimate-cost")

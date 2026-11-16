@@ -159,30 +159,32 @@ def estimate_cost(offering_id: str, avg_input_tokens: int = 500, avg_output_toke
 @mcp.tool()
 def get_alternatives(offering_id: str) -> dict:
     """Find fallback, upgrade, downgrade or lateral substitute offerings
-    for a given offering, via the relationship graph (UMRG v0)."""
+    for a given offering, via the relationship graph (UMRG v0). Traverses
+    both directions of a relationship edge (v0.1 Section 6.3) - shares
+    app/services/alternatives.py with GET /v1/alternatives, so both
+    surfaces behave identically."""
     db = SessionLocal()
     try:
-        from sqlalchemy import select
+        from app.models.catalog import Offering
+        from app.services.alternatives import find_alternatives
 
-        from app.models.relationship import Relationship
-
-        oid = uuid.UUID(offering_id)
-        rels = db.execute(
-            select(Relationship).where(Relationship.source_id == oid, Relationship.lifecycle_status == "active")
-        ).scalars().all()
-        target_ids = [r.target_id for r in rels]
-        candidates = {c.offering.id: c for c in evaluate_offerings(db, target_ids, None)}
+        offering = db.get(Offering, uuid.UUID(offering_id))
+        if offering is None:
+            return {"offering_id": offering_id, "error": "offering not found"}
+        alts = find_alternatives(db, offering)
         return {
             "offering_id": offering_id,
             "alternatives": [
                 {
-                    "relationship_type": r.type,
-                    "target_offering_id": str(r.target_id),
-                    "provider_name": candidates[r.target_id].provider_name if r.target_id in candidates else None,
-                    "model_name": candidates[r.target_id].model_name if r.target_id in candidates else None,
-                    "forward_profile": r.forward_profile,
+                    "relationship_type": a["relationship_type"],
+                    "direction": a["direction"],
+                    "confidence": a["confidence"],
+                    "target_offering_id": str(a["target_offering_id"]) if a["target_offering_id"] else None,
+                    "provider_name": a["target"]["provider_name"] if a["target"] else None,
+                    "model_name": a["target"]["model_name"] if a["target"] else None,
+                    "profile": a["profile"],
                 }
-                for r in rels
+                for a in alts
             ],
         }
     finally:
