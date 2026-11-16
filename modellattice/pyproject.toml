@@ -29,3 +29,11 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["app*", "mcp_server*"]
+
+[tool.pytest.ini_options]
+# Without this, pytest's default *_test.py pattern also auto-collects the
+# code-edit task fixtures under app/evals/data/ (e.g. task_001_test.py),
+# which import a "solution" module that only exists inside the sandboxed
+# subprocess the eval runner creates - they are eval fixtures, not our
+# own test suite.
+testpaths = ["tests"]

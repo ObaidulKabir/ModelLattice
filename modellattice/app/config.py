@@ -14,7 +14,15 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://modellattice:modellattice@localhost:5432/modellattice"
     environment: str = "development"
     eval_weekly_budget_usd: float = 250.0
+    eval_max_run_budget_usd: float = 2.0
     api_write_keys: str = "dev-local-key"
+
+    # Dedicated to ModelLattice's own evaluation runner only - deliberately
+    # NOT reusing any OPENAI_API_KEY/other key already present in a shared
+    # dev environment, since those belong to other projects/billing
+    # contexts. Set this explicitly (e.g. in .env) to enable live eval runs
+    # against OpenRouter-hosted offerings.
+    openrouter_api_key: str | None = None
 
     @property
     def write_keys(self) -> set[str]:
