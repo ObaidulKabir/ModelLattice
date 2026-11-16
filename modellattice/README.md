@@ -73,7 +73,19 @@ app/connectors/
                     prices Gemini 3.8 Flash about 10% above Google's own
                     direct price (confirmed on both sides) - every other
                     cross-checked model across all three providers
-                    matched exactly.
+                    matched exactly. google_pricing.py also parses real
+                    UMIM D11 governance evidence from the same already-
+                    fetched page ("Used to improve our products", Paid
+                    Tier column): all 19 matched Google offerings show
+                    `no_training_on_inputs = true`, written as both a
+                    Measurement and `offering.api_features` (what the
+                    recommender's hard-constraint filter actually reads)
+                    - verified live that `/v1/recommend` with
+                    `no_training_on_inputs: true` now includes all 19,
+                    which was impossible before this. OpenAI's and
+                    Anthropic's pricing pages have no equivalent row;
+                    their data-usage policy more likely lives on a
+                    separate privacy/enterprise page, not yet checked.
 app/relationships/infer.py  UMRG v0 relationship inference: naming-
   convention tiers (Pro/Mini/Nano/Lite suffix, Anthropic's Haiku/Sonnet/
   Opus line) and evidence-derived substitution (two offerings evaluated
@@ -374,10 +386,12 @@ blind pairwise comparisons, no multi-hop path traversal, no hysteresis/
 switching-cost modelling, no cross-tenant aggregation, no scheduled
 evaluations (deliberate - see "Keeping the catalog fresh automatically"
 above), no auth beyond a single shared API key, and still no per-region
-Deployment rows or training-data-policy evidence for any real offering
-(neither OpenRouter's listing nor OpenAI's pricing page publishes
-either). These are the weeks 9-12 and post-MVP items in Section 12 of
-the concept document.
+Deployment rows for any real offering. Training-data-policy evidence
+(UMIM D11) now exists for Google's 19 matched offerings (see
+google_pricing.py above) but not for OpenAI or Anthropic - neither of
+their pricing pages publishes it; their data-usage policy more likely
+lives on a separate privacy/enterprise page, not yet checked. These are
+the weeks 9-12 and post-MVP items in Section 12 of the concept document.
 
 No live evaluation has actually been run in this environment - no
 OPENROUTER_API_KEY is configured here, and the runner is built to refuse

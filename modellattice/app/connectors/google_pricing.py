@@ -23,6 +23,17 @@ December 31, 2026. $1.50 starting January 1, 2027." - only the
 currently-effective one is captured; the future change is not tracked
 automatically).
 
+**Governance evidence (UMIM D11), not just pricing.** The same table
+has a "Used to improve our products" row - real training-data-policy
+evidence, not reused from anywhere else. Surveyed all 31 models on the
+live page before trusting it: every one shows "No" for the Paid Tier
+column (consistently formatted as a markdown link, `[No](/docs/terms)`)
+- written as `no_training_on_inputs_attr = True` per offering. The Free
+Tier column varies ("Yes", "Not available", "N/A") but is not used
+here, since an Offering in this platform represents paid API access.
+This closes a real, previously-flagged gap: no real offering had any
+D11 evidence before this.
+
 A casual, unanchored text search while exploring this page turned up a
 DIFFERENT, wrong pair of numbers for gemini-3.8-flash than its own
 properly-anchored `## ` section contains - the unanchored search had
@@ -44,7 +55,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.connectors.base import upsert_price
+from app.connectors.base import upsert_price, write_feature_measurement
 from app.models.catalog import Offering, Provider
 from app.models.measurement import EvidenceSource
 from app.models.types import OfferingLifecycle, PriceType
@@ -56,13 +67,30 @@ _STANDARD_TAB_RE = re.compile(r'\{% tab title=&quot;Standard&quot; %\}(?P<conten
 _DOLLAR_RE = re.compile(r'\$([\d.]+)')
 
 
-def _first_price_for_row(standard_tab_text: str, row_label_prefix: str) -> float | None:
+def _bullets_for_row(standard_tab_text: str, row_label_prefix: str) -> list[str] | None:
     for row in re.split(r"\n\s*---\s*\n", standard_tab_text):
         bullets = re.findall(r"^\s*\*\s*(.+?)\s*$", row, re.MULTILINE)
         if len(bullets) >= 3 and bullets[0].startswith(row_label_prefix):
-            m = _DOLLAR_RE.search(bullets[2])
-            if m:
-                return float(m.group(1))
+            return bullets
+    return None
+
+
+def _first_price_for_row(standard_tab_text: str, row_label_prefix: str) -> float | None:
+    bullets = _bullets_for_row(standard_tab_text, row_label_prefix)
+    if bullets is None:
+        return None
+    m = _DOLLAR_RE.search(bullets[2])
+    return float(m.group(1)) if m else None
+
+
+def _parse_yes_no(text: str) -> bool | None:
+    """Strips a markdown link, e.g. "[No](/docs/terms)" -> "No". Returns
+    None for anything else ("Not available", "N/A") rather than guess."""
+    cleaned = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text).strip()
+    if cleaned == "Yes":
+        return True
+    if cleaned == "No":
+        return False
     return None
 
 
@@ -71,6 +99,7 @@ class PriceRow:
     slug: str
     input_price_per_1m_usd: float
     output_price_per_1m_usd: float
+    no_training_on_inputs: bool | None = None  # UMIM D11, from the Paid Tier column only
 
 
 def fetch_raw(timeout: float = 20.0) -> tuple[list[PriceRow], str, str]:
@@ -93,8 +122,22 @@ def fetch_raw(timeout: float = 20.0) -> tuple[list[PriceRow], str, str]:
         standard = tab_m.group("content")
         input_price = _first_price_for_row(standard, "Input price")
         output_price = _first_price_for_row(standard, "Output price")
-        if input_price is not None and output_price is not None:
-            rows.append(PriceRow(slug=slug, input_price_per_1m_usd=input_price, output_price_per_1m_usd=output_price))
+        if input_price is None or output_price is None:
+            continue
+
+        no_training = None
+        policy_bullets = _bullets_for_row(standard, "Used to improve our products")
+        if policy_bullets is not None:
+            paid_tier_value = _parse_yes_no(policy_bullets[2])
+            if paid_tier_value is not None:
+                no_training = not paid_tier_value  # "used to improve products" = Yes -> no_training_on_inputs = False
+
+        rows.append(
+            PriceRow(
+                slug=slug, input_price_per_1m_usd=input_price, output_price_per_1m_usd=output_price,
+                no_training_on_inputs=no_training,
+            )
+        )
 
     return rows, raw_text, content_hash
 
@@ -111,7 +154,7 @@ def ingest_google_pricing(db: Session, rows: list[PriceRow], evidence: EvidenceS
     if google_provider is None:
         return {"matched": 0, "unmatched": len(rows), "price_points_written": 0, "error": "no 'Google' provider on file yet - run the openrouter connector first"}
 
-    matched = unmatched = price_points_written = 0
+    matched = unmatched = price_points_written = governance_measurements_written = 0
     for row in rows:
         known = db.execute(select(Offering).where(Offering.provider_model_name == f"google/{row.slug}")).scalar_one_or_none()
         if known is None:
@@ -132,6 +175,19 @@ def ingest_google_pricing(db: Session, rows: list[PriceRow], evidence: EvidenceS
 
         price_points_written += int(upsert_price(db, direct_offering.id, PriceType.INPUT_TOKEN.value, row.input_price_per_1m_usd, evidence.id, now))
         price_points_written += int(upsert_price(db, direct_offering.id, PriceType.OUTPUT_TOKEN.value, row.output_price_per_1m_usd, evidence.id, now))
+        governance_measurements_written += int(
+            write_feature_measurement(db, direct_offering.id, "no_training_on_inputs_attr", row.no_training_on_inputs, evidence.id, now)
+        )
+        if row.no_training_on_inputs is not None:
+            # Also set on api_features, same denormalized-convenience pattern
+            # app/connectors/base.py uses for tool_calling/json_schema_output -
+            # this is what the recommender's hard-constraint filter actually
+            # reads (app/services/recommender.py); the Measurement above is
+            # the evidence trail, not what filtering queries at request time.
+            direct_offering.api_features = {**(direct_offering.api_features or {}), "no_training_on_inputs": row.no_training_on_inputs}
 
     db.commit()
-    return {"matched": matched, "unmatched": unmatched, "price_points_written": price_points_written}
+    return {
+        "matched": matched, "unmatched": unmatched, "price_points_written": price_points_written,
+        "governance_measurements_written": governance_measurements_written,
+    }

@@ -122,7 +122,7 @@ def _latest_measurement(db: Session, offering_id: uuid.UUID, attribute_key: str)
     ).scalar_one_or_none()
 
 
-def _write_measurement_if_changed(
+def write_measurement_if_changed(
     db: Session, offering_id: uuid.UUID, attribute_key: str, value: object, status: str,
     evidence_id: uuid.UUID, now: dt.datetime,
 ) -> bool:
@@ -142,11 +142,11 @@ def _write_measurement_if_changed(
     return True
 
 
-def _write_feature_measurement(db: Session, offering_id: uuid.UUID, attribute_key: str, supported: bool | None, evidence_id: uuid.UUID, now: dt.datetime) -> bool:
+def write_feature_measurement(db: Session, offering_id: uuid.UUID, attribute_key: str, supported: bool | None, evidence_id: uuid.UUID, now: dt.datetime) -> bool:
     if supported is None:
         return False  # no reliable signal either way; writing "unknown" every run would just be noise
     status = MeasurementStatus.SUPPORTED.value if supported else MeasurementStatus.UNSUPPORTED.value
-    return _write_measurement_if_changed(db, offering_id, attribute_key, supported, status, evidence_id, now)
+    return write_measurement_if_changed(db, offering_id, attribute_key, supported, status, evidence_id, now)
 
 
 def ingest(db: Session, host_provider_name: str, host_provider_type: str, items: list[RawOffering], evidence: EvidenceSource) -> IngestSummary:
@@ -197,11 +197,11 @@ def ingest(db: Session, host_provider_name: str, host_provider_type: str, items:
             summary.price_points_written += int(changed)
 
         written = 0
-        written += _write_feature_measurement(db, offering.id, "supports_tool_calling", raw.supports_tool_calling, evidence.id, now)
-        written += _write_feature_measurement(db, offering.id, "supports_json_schema_output", raw.supports_json_schema_output, evidence.id, now)
-        written += _write_feature_measurement(db, offering.id, "supports_vision_input", raw.supports_vision_input, evidence.id, now)
+        written += write_feature_measurement(db, offering.id, "supports_tool_calling", raw.supports_tool_calling, evidence.id, now)
+        written += write_feature_measurement(db, offering.id, "supports_json_schema_output", raw.supports_json_schema_output, evidence.id, now)
+        written += write_feature_measurement(db, offering.id, "supports_vision_input", raw.supports_vision_input, evidence.id, now)
         if raw.context_length is not None:
-            written += _write_measurement_if_changed(
+            written += write_measurement_if_changed(
                 db, offering.id, "max_context_tokens", raw.context_length,
                 MeasurementStatus.SUPPORTED.value, evidence.id, now,
             )
