@@ -37,6 +37,15 @@ app/connectors/
                   (~470 offerings across ~60 developers, with live pricing
                   and feature flags). No API key to manage.
   developer_map.py  Id-prefix -> developer display name (governed data).
+scripts/repair_model_identity.py  One-time (idempotent) cleanup for a real
+  data bug found after the first live connector runs: OpenRouter's
+  ":free"/":batch" commercial-tier variants (100 of 468 offerings) had
+  each gotten their OWN Model row instead of being a second Offering of
+  the existing Model - see the file's docstring and
+  tests/test_openrouter_identity.py. Fixed going forward in
+  app/connectors/openrouter.py; this script merges what was already
+  ingested before the fix (run once if you seeded a catalog before this
+  commit; a clean run_connectors afterward creates no duplicates).
 migrations/       Alembic migrations (Postgres is the system of record).
 app/evals/
   tasks/            Real task banks: structured_extraction_v1.py (5 JSON-

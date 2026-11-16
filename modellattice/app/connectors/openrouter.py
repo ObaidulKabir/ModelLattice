@@ -21,6 +21,7 @@ Caveats this connector is honest about rather than guessing:
 """
 import hashlib
 import json
+import re
 
 import httpx
 
@@ -28,6 +29,22 @@ from app.connectors.base import RawOffering
 from app.connectors.developer_map import resolve_developer_name
 
 MODELS_URL = "https://openrouter.ai/api/v1/models"
+
+# OpenRouter's `name` field appends a parenthetical for a commercial-tier
+# variant of the SAME underlying model - e.g. id "openai/gpt-6.1-terra" vs
+# "openai/gpt-6.1-terra:batch" (86 of 468 catalog entries) or "...:free"
+# (14 of 468). Confirmed against the live catalog: these are the only two
+# suffixes that appear, both as an id ":suffix" and a name "(suffix)".
+# Left unstripped, they create a second, spurious Model row for what is
+# really just another Offering of the same model (v0.1 Glossary:
+# Model vs Offering) - found and fixed after noticing OpenRouter's
+# free/paid pairs (e.g. liquid/lfm-3-1.7b and liquid/lfm-3-1.7b:free) had
+# resolved to two different Model rows instead of one Model, two Offerings.
+_TIER_SUFFIX_RE = re.compile(r"\s*\((?:free|batch)\)\s*$", re.IGNORECASE)
+
+
+def _strip_tier_suffix(label: str) -> str:
+    return _TIER_SUFFIX_RE.sub("", label).strip()
 
 
 def _to_float(value: str | None) -> float | None:
@@ -63,7 +80,7 @@ def fetch_raw(timeout: float = 20.0) -> tuple[list[RawOffering], str, str]:
 
         name = m.get("name") or model_id
         _, sep, label = name.partition(": ")
-        model_family = (label if sep else name).strip() or model_id
+        model_family = _strip_tier_suffix(label if sep else name) or model_id
 
         arch = m.get("architecture") or {}
         input_modalities = arch.get("input_modalities") or []
