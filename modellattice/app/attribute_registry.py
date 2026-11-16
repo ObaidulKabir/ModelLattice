@@ -12,6 +12,12 @@ from sqlalchemy.orm import Session
 from app.models.measurement import AttributeDefinition
 
 ATTRIBUTE_DEFINITIONS = [
+    # D01 Identity & Architecture (third-party: Epoch AI's "Notable AI
+    # models" dataset - app/connectors/epoch_ai.py)
+    dict(key="parameter_count", dimension="D01", label="Parameter count (third-party: Epoch AI)", value_type="number", unit="parameters"),
+    dict(key="training_compute_flop", dimension="D01", label="Training compute (third-party: Epoch AI)", value_type="number", unit="FLOP"),
+    dict(key="open_weights", dimension="D01", label="Model weights are openly released (third-party: Epoch AI)", value_type="bool"),
+    dict(key="model_accessibility", dimension="D01", label="Access model (API access / open weights / hosted-only / unreleased - third-party: Epoch AI)", value_type="enum"),
     # D02 Modality & I/O
     dict(key="supports_vision_input", dimension="D02", label="Accepts image input", value_type="bool"),
     dict(key="supports_audio_input", dimension="D02", label="Accepts audio input", value_type="bool"),

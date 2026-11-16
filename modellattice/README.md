@@ -107,6 +107,38 @@ app/connectors/
                     Anthropic's pricing pages have no equivalent row;
                     their data-usage policy more likely lives on a
                     separate privacy/enterprise page, not yet checked.
+  epoch_ai.py       The first UMIM D01 (Identity & Architecture) connector:
+                    Epoch AI's "Notable AI models" dataset
+                    (epoch.ai/data/all_ai_models.csv) - a free, CC-BY
+                    research dataset, plain CSV over HTTP, no auth, no
+                    JS rendering. Writes MODEL-level (not Offering-level)
+                    measurements - parameter_count, training_compute_flop,
+                    open_weights, model_accessibility - since these are
+                    properties of the canonical model regardless of which
+                    host serves it, plus sets Model.release_date directly
+                    (a column that existed since v0.2 but had no real data
+                    source until now). Matched by Model.family, normalized
+                    (hyphens/dots/underscores/spaces collapsed to one
+                    space, case-folded) since the two sources format names
+                    differently ("GLM 5.3" vs Epoch's "GLM-5.3") - still a
+                    full structural match, never fuzzy; recovered 48 real
+                    matches (106 -> 154) over a naive exact-string
+                    comparison, verified by eye. Also requires the two
+                    sides' developer names to overlap as substrings
+                    ("Z.ai (Zhipu AI)" vs our "Zhipu AI", "Google
+                    DeepMind" vs our "Google") before attaching, so a
+                    same-named model under a genuinely different developer
+                    is skipped, never guessed. Deliberately honest about
+                    sparsity: closed frontier models (Claude Opus 5.5,
+                    GPT-5.5, Gemini 3.1 Pro) correctly show no
+                    parameter_count/training_compute_flop (undisclosed by
+                    the labs), while open-weight models (GLM, Gemma)
+                    correctly do - confirmed live, never backfilled.
+                    `app/connectors/base.py`'s write helpers gained an
+                    optional `subject_type` parameter for this (default
+                    Offering, unchanged for every other caller) rather
+                    than duplicating the append-only/idempotent-rewrite
+                    logic for Model-level attributes.
 app/relationships/infer.py  UMRG v0 relationship inference: naming-
   convention tiers (Pro/Mini/Nano/Lite suffix, Anthropic's Haiku/Sonnet/
   Opus line), version lineage (same family name with a trailing bare
@@ -199,7 +231,7 @@ scripts/
   scheduler_daemon.py  Long-running process wrapping app/scheduler.py -
                     run it as its own service, separate from the web app.
   run_eval.py        CLI to run a REAL evaluation against a live offering.
-tests/            pytest suite against an in-memory SQLite DB (102 tests).
+tests/            pytest suite against an in-memory SQLite DB (111 tests).
 ```
 
 ## Quickstart
@@ -219,6 +251,10 @@ cp .env.example .env                       # adjust DATABASE_URL if needed
 # Independent, direct-from-provider real sources, each fetched directly
 # (not via OpenRouter) and cross-checked against its resale pricing:
 ./.venv/Scripts/python.exe -m scripts.run_connectors openai_pricing anthropic_pricing google_pricing
+
+# Independent third-party research data (UMIM D01 - parameter count,
+# training compute, open-weights status, release date), not from any provider:
+./.venv/Scripts/python.exe -m scripts.run_connectors epoch_ai
 
 ./.venv/Scripts/python.exe -m uvicorn app.main:app --reload --port 8008
 # -> http://127.0.0.1:8008/docs       (REST API, OpenAPI docs)

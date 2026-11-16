@@ -17,7 +17,7 @@ import dataclasses
 import datetime as dt
 
 from app.attribute_registry import ensure_attribute_definitions
-from app.connectors import anthropic_pricing, google_pricing, openai_pricing, openrouter
+from app.connectors import anthropic_pricing, epoch_ai, google_pricing, openai_pricing, openrouter
 from app.connectors.base import ingest as _ingest_identity_and_pricing
 from app.db import SessionLocal
 from app.models.measurement import EvidenceSource
@@ -57,6 +57,14 @@ CONNECTORS = {
         "evidence_type": EvidenceType.OFFICIAL_DOC.value,
         "method": "google_pricing connector: first-party pricing page (cross-check vs OpenRouter resale pricing)",
         "ingest": google_pricing.ingest_google_pricing,
+    },
+    "epoch_ai": {
+        "fetch": epoch_ai.fetch_raw,
+        "url": epoch_ai.DATASET_URL,
+        "host_provider_name": "Epoch AI",
+        "evidence_type": EvidenceType.THIRD_PARTY.value,
+        "method": "epoch_ai connector: Epoch AI's \"Notable AI models\" dataset (independent research org, not a provider)",
+        "ingest": epoch_ai.ingest_epoch_ai,
     },
 }
 

@@ -160,7 +160,10 @@ def offering_detail(request: Request, offering_id: uuid.UUID, db: Session = Depe
     ).scalars().all()
 
     measurements = db.execute(
-        select(Measurement).where(Measurement.subject_type == "offering", Measurement.subject_id == offering_id)
+        select(Measurement).where(
+            ((Measurement.subject_type == "offering") & (Measurement.subject_id == offering_id))
+            | ((Measurement.subject_type == "model") & (Measurement.subject_id == offering.model_id))
+        )
         .order_by(Measurement.observed_at.desc()).limit(30)
     ).scalars().all()
 

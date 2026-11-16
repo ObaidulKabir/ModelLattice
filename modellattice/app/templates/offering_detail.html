@@ -9,6 +9,7 @@
   <div>Developer</div><div>{{ offering.model.developer.name if offering.model.developer else "—" }}</div>
   <div>Lifecycle</div><div>{{ offering.lifecycle }}</div>
   <div>Modalities</div><div>{{ offering.model.modalities | join(", ") if offering.model.modalities else "—" }}</div>
+  <div>Release date</div><div>{{ offering.model.release_date.strftime("%Y-%m-%d") if offering.model.release_date else "—" }}</div>
   <div>Context window</div><div>{{ offering.limits.get("max_context_tokens", "—") if offering.limits else "—" }} tokens</div>
   <div>API features</div><div>{{ offering.api_features or "—" }}</div>
   <div>Offering ID</div><div class="mono">{{ offering.id }}</div>

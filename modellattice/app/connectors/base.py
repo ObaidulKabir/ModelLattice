@@ -124,12 +124,12 @@ def upsert_price(db: Session, offering_id: uuid.UUID, price_type: str, amount_pe
     return True
 
 
-def _latest_measurement(db: Session, offering_id: uuid.UUID, attribute_key: str) -> Measurement | None:
+def _latest_measurement(db: Session, subject_id: uuid.UUID, attribute_key: str, subject_type: str = SubjectType.OFFERING.value) -> Measurement | None:
     return db.execute(
         select(Measurement)
         .where(
-            Measurement.subject_type == SubjectType.OFFERING.value,
-            Measurement.subject_id == offering_id,
+            Measurement.subject_type == subject_type,
+            Measurement.subject_id == subject_id,
             Measurement.attribute_key == attribute_key,
         )
         .order_by(Measurement.observed_at.desc())
@@ -138,30 +138,38 @@ def _latest_measurement(db: Session, offering_id: uuid.UUID, attribute_key: str)
 
 
 def write_measurement_if_changed(
-    db: Session, offering_id: uuid.UUID, attribute_key: str, value: object, status: str,
-    evidence_id: uuid.UUID, now: dt.datetime,
+    db: Session, subject_id: uuid.UUID, attribute_key: str, value: object, status: str,
+    evidence_id: uuid.UUID, now: dt.datetime, subject_type: str = SubjectType.OFFERING.value,
 ) -> bool:
     """Append-only, but not noisily so: a fresh row is only written when
     the value or status actually differs from the latest one on file.
     Otherwise a connector re-run on an unchanged catalog would duplicate
-    every measurement every time with zero new information."""
-    latest = _latest_measurement(db, offering_id, attribute_key)
+    every measurement every time with zero new information.
+
+    `subject_type` defaults to Offering (every existing caller writes
+    per-offering attributes); pass SubjectType.MODEL.value for an
+    attribute that belongs to the canonical Model itself regardless of
+    which host serves it (e.g. parameter count - app/connectors/epoch_ai.py)."""
+    latest = _latest_measurement(db, subject_id, attribute_key, subject_type)
     if latest is not None and latest.status == status and (latest.value or {}).get("raw") == value:
         return False
     db.add(
         Measurement(
-            subject_type=SubjectType.OFFERING.value, subject_id=offering_id, attribute_key=attribute_key,
+            subject_type=subject_type, subject_id=subject_id, attribute_key=attribute_key,
             value={"raw": value}, status=status, context={}, evidence_id=evidence_id, observed_at=now,
         )
     )
     return True
 
 
-def write_feature_measurement(db: Session, offering_id: uuid.UUID, attribute_key: str, supported: bool | None, evidence_id: uuid.UUID, now: dt.datetime) -> bool:
+def write_feature_measurement(
+    db: Session, subject_id: uuid.UUID, attribute_key: str, supported: bool | None, evidence_id: uuid.UUID,
+    now: dt.datetime, subject_type: str = SubjectType.OFFERING.value,
+) -> bool:
     if supported is None:
         return False  # no reliable signal either way; writing "unknown" every run would just be noise
     status = MeasurementStatus.SUPPORTED.value if supported else MeasurementStatus.UNSUPPORTED.value
-    return write_measurement_if_changed(db, offering_id, attribute_key, supported, status, evidence_id, now)
+    return write_measurement_if_changed(db, subject_id, attribute_key, supported, status, evidence_id, now, subject_type)
 
 
 def ingest(db: Session, host_provider_name: str, host_provider_type: str, items: list[RawOffering], evidence: EvidenceSource) -> IngestSummary:
