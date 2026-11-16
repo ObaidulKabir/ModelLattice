@@ -18,6 +18,16 @@ Caveats this connector is honest about rather than guessing:
   accepts, which is a reasonable proxy for tool-calling / structured
   output support but is evidence about the OFFERING, not a universal
   claim about the underlying model via every other host.
+
+Also extracts real third-party relative capability scores bundled in
+OpenRouter's own catalog response under `benchmarks.artificial_analysis`
+- `intelligence_index`, `coding_index`, `agentic_index` - confirmed
+present on 209 of 468 live catalog entries (45%). These populate UMIM
+dimensions D03 (reasoning), D04 (task competency) and D06 (agentic
+capability), none of which had any real evidence before. `ingest()`
+(app/connectors/base.py) attributes them to a separate THIRD_PARTY
+EvidenceSource, since Artificial Analysis - not OpenRouter itself, and
+not the model's own developer - produced them.
 """
 import hashlib
 import json
@@ -84,12 +94,14 @@ def fetch_raw(timeout: float = 20.0) -> tuple[list[RawOffering], str, str]:
 
         arch = m.get("architecture") or {}
         input_modalities = arch.get("input_modalities") or []
+        output_modalities = arch.get("output_modalities") or []
         supported_params = set(m.get("supported_parameters") or [])
 
         top_provider = m.get("top_provider") or {}
         context_length = top_provider.get("context_length") or m.get("context_length")
 
         pricing = m.get("pricing") or {}
+        aa = (m.get("benchmarks") or {}).get("artificial_analysis") or {}
 
         items.append(
             RawOffering(
@@ -104,8 +116,14 @@ def fetch_raw(timeout: float = 20.0) -> tuple[list[RawOffering], str, str]:
                     {"response_format", "structured_outputs"} & supported_params
                 ),
                 supports_vision_input="image" in input_modalities,
+                supports_audio_input="audio" in input_modalities,
+                supports_audio_output="audio" in output_modalities,
+                supports_video_input="video" in input_modalities,
                 price_input_per_token_usd=_to_float(pricing.get("prompt")),
                 price_output_per_token_usd=_to_float(pricing.get("completion")),
+                intelligence_index=aa.get("intelligence_index"),
+                coding_index=aa.get("coding_index"),
+                agentic_index=aa.get("agentic_index"),
             )
         )
     return items, raw_text, content_hash

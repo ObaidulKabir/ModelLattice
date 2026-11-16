@@ -114,3 +114,62 @@ def test_unknown_feature_signal_writes_no_measurement(db_session):
 
     measurements = db_session.execute(select(Measurement)).scalars().all()
     assert not any(m.attribute_key == "supports_tool_calling" for m in measurements)
+
+
+def test_benchmark_indices_get_their_own_third_party_evidence(db_session):
+    """intelligence_index/coding_index/agentic_index are THIRD_PARTY
+    evidence (Artificial Analysis), never attributed to the connector's
+    own official_doc catalog evidence row."""
+    evidence = _evidence(db_session)  # official_doc
+    raw = RawOffering(
+        developer_name="Acme", model_family="Acme One", model_version=None, provider_model_name="acme/one",
+        modalities=["text"], context_length=100_000, supports_tool_calling=True,
+        supports_json_schema_output=None, supports_vision_input=None,
+        price_input_per_token_usd=0.000001, price_output_per_token_usd=0.000002,
+        intelligence_index=55.5, coding_index=40.2, agentic_index=None,
+    )
+    ingest(db_session, "TestHost", ProviderType.HOST.value, [raw], evidence)
+
+    measurements = {m.attribute_key: m for m in db_session.execute(select(Measurement)).scalars().all()}
+    assert measurements["intelligence_index"].value["raw"] == 55.5
+    assert measurements["coding_index"].value["raw"] == 40.2
+    assert "agentic_index" not in measurements  # None -> not written, never guessed
+
+    benchmark_evidence = db_session.get(EvidenceSource, measurements["intelligence_index"].evidence_id)
+    assert benchmark_evidence.type == EvidenceType.THIRD_PARTY.value
+    assert benchmark_evidence.id != evidence.id  # a separate row from the catalog's own official_doc evidence
+
+
+def test_media_modality_flags_written_like_vision(db_session):
+    evidence = _evidence(db_session)
+    raw = RawOffering(
+        developer_name="Acme", model_family="Acme One", model_version=None, provider_model_name="acme/one",
+        modalities=["text", "audio", "video"], context_length=100_000, supports_tool_calling=True,
+        supports_json_schema_output=None, supports_vision_input=False,
+        supports_audio_input=True, supports_audio_output=False, supports_video_input=True,
+        price_input_per_token_usd=0.000001, price_output_per_token_usd=0.000002,
+    )
+    ingest(db_session, "TestHost", ProviderType.HOST.value, [raw], evidence)
+
+    measurements = {m.attribute_key: m.status for m in db_session.execute(select(Measurement)).scalars().all()}
+    assert measurements["supports_vision_input"] == "unsupported"
+    assert measurements["supports_audio_input"] == "supported"
+    assert measurements["supports_audio_output"] == "unsupported"
+    assert measurements["supports_video_input"] == "supported"
+
+
+def test_attribute_definitions_auto_registered_on_ingest(db_session):
+    """New attribute keys (benchmark indices, media flags) must be
+    registered in attribute_definition, not just silently used by
+    Measurement - app/connectors/registry.py normally calls this, but
+    ingest() itself must not depend on that having already happened."""
+    from app.attribute_registry import ensure_attribute_definitions
+    from app.models.measurement import AttributeDefinition
+
+    created = ensure_attribute_definitions(db_session)
+    assert created > 0
+    keys = set(db_session.execute(select(AttributeDefinition.key)).scalars().all())
+    assert {"intelligence_index", "coding_index", "agentic_index", "supports_audio_input"} <= keys
+
+    # Calling it again is a no-op (idempotent).
+    assert ensure_attribute_definitions(db_session) == 0

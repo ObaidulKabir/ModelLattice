@@ -17,7 +17,11 @@ import logging
 from app.config import get_settings
 from app.connectors.registry import run_all_connectors
 from app.db import SessionLocal
-from app.relationships.infer import infer_naming_convention_tiers, infer_substitution_from_evidence
+from app.relationships.infer import (
+    infer_naming_convention_tiers,
+    infer_substitution_from_evidence,
+    infer_version_lineage_from_pure_numeric_ids,
+)
 
 logger = logging.getLogger("modellattice.scheduler")
 
@@ -47,10 +51,11 @@ def refresh_relationships_job() -> None:
     db = SessionLocal()
     try:
         tiers = infer_naming_convention_tiers(db)
+        lineage = infer_version_lineage_from_pure_numeric_ids(db)
         subs = infer_substitution_from_evidence(db)
         logger.info(
-            "relationships: tier_edges_written=%d substitution_edges_written=%d (pairs_considered=%d)",
-            tiers.tier_edges_written, subs.substitution_edges_written, subs.pairs_considered,
+            "relationships: tier_edges_written=%d lineage_edges_written=%d substitution_edges_written=%d (pairs_considered=%d)",
+            tiers.tier_edges_written, lineage.lineage_edges_written, subs.substitution_edges_written, subs.pairs_considered,
         )
     except Exception:
         logger.exception("relationship inference failed")

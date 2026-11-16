@@ -20,14 +20,23 @@ from sqlalchemy.orm import Session
 from app.models.catalog import Model, Offering, Provider
 from app.models.measurement import EvidenceSource, Measurement
 from app.models.pricing import PricePoint
-from app.models.types import MeasurementStatus, OfferingLifecycle, PriceType, ProviderType, SubjectType
+from app.models.types import EvidenceType, MeasurementStatus, OfferingLifecycle, PriceType, ProviderType, SubjectType
 
 
 @dataclasses.dataclass
 class RawOffering:
     """What a connector must produce per model it discovers. Prices are in
     USD per single token (not per 1M); `ingest()` does the unit conversion
-    so every connector reports in the same natural unit it was given."""
+    so every connector reports in the same natural unit it was given.
+
+    The three *_index fields are third-party relative benchmark scores
+    (e.g. Artificial Analysis's intelligence/coding/agentic indices, as
+    bundled in OpenRouter's own catalog response) - NOT the connector's
+    own official_doc evidence, so `ingest()` attributes them to a
+    separate THIRD_PARTY EvidenceSource rather than the catalog listing's
+    own evidence row. They populate UMIM D03 (reasoning), D04 (task
+    competency) and D06 (agentic capability) respectively - all three
+    previously unpopulated for any real offering."""
 
     developer_name: str
     model_family: str
@@ -38,8 +47,14 @@ class RawOffering:
     supports_tool_calling: bool | None  # None = no reliable signal either way
     supports_json_schema_output: bool | None
     supports_vision_input: bool | None
-    price_input_per_token_usd: float | None
-    price_output_per_token_usd: float | None
+    supports_audio_input: bool | None = None
+    supports_audio_output: bool | None = None
+    supports_video_input: bool | None = None
+    price_input_per_token_usd: float | None = None
+    price_output_per_token_usd: float | None = None
+    intelligence_index: float | None = None  # third-party, D03
+    coding_index: float | None = None  # third-party, D04
+    agentic_index: float | None = None  # third-party, D06
 
 
 @dataclasses.dataclass
@@ -157,6 +172,24 @@ def ingest(db: Session, host_provider_name: str, host_provider_type: str, items:
     db.flush()
     seen_offering_ids: set[uuid.UUID] = set()
 
+    # Lazily created only if at least one item actually carries a benchmark
+    # score - a separate THIRD_PARTY evidence row, since Artificial
+    # Analysis (not this connector's own host) produced these numbers.
+    benchmark_evidence: EvidenceSource | None = None
+
+    def _benchmark_evidence() -> EvidenceSource:
+        nonlocal benchmark_evidence
+        if benchmark_evidence is None:
+            benchmark_evidence = EvidenceSource(
+                type=EvidenceType.THIRD_PARTY.value,
+                uri=evidence.uri,
+                method=f"{host_provider_name} catalog: bundled Artificial Analysis benchmark data",
+                collected_at=now,
+            )
+            db.add(benchmark_evidence)
+            db.flush()
+        return benchmark_evidence
+
     for raw in items:
         summary.offerings_seen += 1
 
@@ -200,11 +233,26 @@ def ingest(db: Session, host_provider_name: str, host_provider_type: str, items:
         written += write_feature_measurement(db, offering.id, "supports_tool_calling", raw.supports_tool_calling, evidence.id, now)
         written += write_feature_measurement(db, offering.id, "supports_json_schema_output", raw.supports_json_schema_output, evidence.id, now)
         written += write_feature_measurement(db, offering.id, "supports_vision_input", raw.supports_vision_input, evidence.id, now)
+        written += write_feature_measurement(db, offering.id, "supports_audio_input", raw.supports_audio_input, evidence.id, now)
+        written += write_feature_measurement(db, offering.id, "supports_audio_output", raw.supports_audio_output, evidence.id, now)
+        written += write_feature_measurement(db, offering.id, "supports_video_input", raw.supports_video_input, evidence.id, now)
         if raw.context_length is not None:
             written += write_measurement_if_changed(
                 db, offering.id, "max_context_tokens", raw.context_length,
                 MeasurementStatus.SUPPORTED.value, evidence.id, now,
             )
+
+        for attr_key, index_value in (
+            ("intelligence_index", raw.intelligence_index),
+            ("coding_index", raw.coding_index),
+            ("agentic_index", raw.agentic_index),
+        ):
+            if index_value is not None:
+                written += write_measurement_if_changed(
+                    db, offering.id, attr_key, index_value, MeasurementStatus.SUPPORTED.value,
+                    _benchmark_evidence().id, now,
+                )
+
         summary.measurements_written += written
 
     # Change detection: anything this host previously listed that did not

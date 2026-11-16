@@ -16,6 +16,7 @@ connector is one dict entry; nothing else needs to change.
 import dataclasses
 import datetime as dt
 
+from app.attribute_registry import ensure_attribute_definitions
 from app.connectors import anthropic_pricing, google_pricing, openai_pricing, openrouter
 from app.connectors.base import ingest as _ingest_identity_and_pricing
 from app.db import SessionLocal
@@ -80,6 +81,7 @@ def run_connector(name: str) -> ConnectorRunResult:
 
     db = SessionLocal()
     try:
+        ensure_attribute_definitions(db)  # cheap, idempotent - guarantees every attribute a connector writes is registered
         evidence = EvidenceSource(
             type=cfg["evidence_type"], uri=cfg["url"], method=cfg["method"],
             collected_at=dt.datetime.now(dt.timezone.utc), content_hash=content_hash,

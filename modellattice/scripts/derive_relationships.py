@@ -4,7 +4,11 @@ Usage:
     .venv/Scripts/python.exe -m scripts.derive_relationships
 """
 from app.db import SessionLocal
-from app.relationships.infer import infer_naming_convention_tiers, infer_substitution_from_evidence
+from app.relationships.infer import (
+    infer_naming_convention_tiers,
+    infer_substitution_from_evidence,
+    infer_version_lineage_from_pure_numeric_ids,
+)
 
 
 def main() -> None:
@@ -12,6 +16,9 @@ def main() -> None:
     try:
         tiers = infer_naming_convention_tiers(db)
         print(f"naming-convention tiers: {tiers.tier_edges_written} edge(s) written/updated")
+
+        lineage = infer_version_lineage_from_pure_numeric_ids(db)
+        print(f"version lineage: {lineage.lineage_edges_written} edge(s) written/updated")
 
         subs = infer_substitution_from_evidence(db)
         print(

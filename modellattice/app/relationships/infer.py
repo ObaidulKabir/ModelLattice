@@ -16,6 +16,14 @@ it (v0.1 Section 3: "evidence before assertion"; Section 11.2:
    This is real evidence we produced ourselves (the eval runner), not a
    guess; confidence scales with how close the scores are and how much
    sample size backs them.
+3. `infer_version_lineage_from_pure_numeric_ids`: chains same-family model
+   names ending in a trailing numeric version ("Claude Opus 4.5" ->
+   "Claude Opus 5") into Model.lineage_parent_id plus a LINEAGE edge.
+   Codenamed releases (GPT "Luna", Gemini "Carbon") are never ordered -
+   there's no public codename-to-sequence mapping to go on - and a family
+   whose "versions" mix date codes (e.g. "2407") with small semantic
+   numbers (e.g. "4") is skipped entirely, since the two schemes aren't
+   comparable and sorting them together would misrepresent release order.
 
 Every relationship found here is upserted (never duplicated) by
 (type, source_id, target_id), the same idempotency pattern as the
@@ -36,6 +44,13 @@ from app.models.types import EvidenceType, MeasurementStatus, RelationshipType, 
 
 TIER_CONFIDENCE = 0.6
 SUBSTITUTION_MAX_DELTA = 0.10
+LINEAGE_CONFIDENCE = 0.65
+
+# Base name + trailing numeric version, e.g. "Claude Opus 4.5" -> base
+# "Claude Opus", version "4.5"; "GPT-5.2" -> base "GPT", version "5.2".
+# Anchored to end-of-string so a tier/codename suffix ("Gemini 2.5 Flash",
+# "GPT-5.6 Luna") never matches - those aren't a bare version number.
+_VERSION_SUFFIX_RE = re.compile(r"^(?P<base>.+?)[\s-](?P<version>\d+(?:\.\d+)*)$")
 
 # Suffix word -> True if the suffixed variant is the BIGGER/more capable
 # one (so the edge goes suffixed -> base), False if the suffixed variant
@@ -52,6 +67,7 @@ _ANTHROPIC_RE = re.compile(r"^Claude\s+(Haiku|Sonnet|Opus)\s+(.+)$")
 class InferenceSummary:
     tier_edges_written: int = 0
     substitution_edges_written: int = 0
+    lineage_edges_written: int = 0
     pairs_considered: int = 0
 
 
@@ -142,6 +158,59 @@ def infer_naming_convention_tiers(db: Session) -> InferenceSummary:
                 conditions={}, evidence_ids=[f"evidence:{evidence.id}"], confidence=TIER_CONFIDENCE,
             )
             summary.tier_edges_written += int(written)
+
+    db.commit()
+    return summary
+
+
+def _version_is_semantic(version: str) -> bool:
+    """False for date-coded version strings (e.g. "2407", "0423") that
+    happen to also be all-digits: every component must be < 100, which a
+    YYMM/MMDD code never satisfies but a real semantic version always
+    does in this catalog (checked against 377 real family names)."""
+    return all(int(part) < 100 for part in version.split("."))
+
+
+def infer_version_lineage_from_pure_numeric_ids(db: Session) -> InferenceSummary:
+    summary = InferenceSummary()
+    models = db.execute(select(Model)).scalars().all()
+
+    evidence = EvidenceSource(
+        type=EvidenceType.DERIVED_INFERENCE.value,
+        method="naming-convention heuristic: trailing pure-numeric version on the same model family name",
+        collected_at=dt.datetime.now(dt.timezone.utc),
+    )
+    db.add(evidence)
+    db.flush()
+
+    groups: dict[tuple, list[tuple[tuple[int, ...], Model]]] = {}
+    for model in models:
+        match = _VERSION_SUFFIX_RE.match(model.family)
+        if not match:
+            continue
+        version = match.group("version")
+        if not _version_is_semantic(version):
+            continue
+        version_tuple = tuple(int(part) for part in version.split("."))
+        key = (model.developer_id, match.group("base"))
+        groups.setdefault(key, []).append((version_tuple, model))
+
+    for entries in groups.values():
+        if len(entries) < 2:
+            continue
+        entries.sort(key=lambda e: e[0])
+        for (_, older), (_, newer) in zip(entries, entries[1:]):
+            newer.lineage_parent_id = older.id
+            written = _upsert_relationship(
+                db, RelationshipType.LINEAGE.value, SubjectType.MODEL.value, newer.id, older.id,
+                forward_profile={
+                    "relation": "successor_of", "method": "naming_convention",
+                    "note": f"{newer.canonical_name} follows {older.canonical_name} in the same naming sequence",
+                },
+                reverse_profile={"relation": "predecessor_of", "method": "naming_convention"},
+                conditions={}, evidence_ids=[f"evidence:{evidence.id}"], confidence=LINEAGE_CONFIDENCE,
+            )
+            summary.lineage_edges_written += int(written)
 
     db.commit()
     return summary

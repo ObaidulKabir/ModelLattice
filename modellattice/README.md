@@ -36,15 +36,36 @@ app/monitoring/regression.py  Latency and error-rate regression
   scoring a candidate poorly is a quality result, never counted as a
   reliability error. GET /v1/offerings/{id}/regression. Returns
   insufficient_data rather than a verdict when either window is too thin.
+app/attribute_registry.py  The governed UMIM attribute registry (v0.1
+  Section 3, "metadata-driven design"): a new capability is a data row
+  here, not a schema migration. Single source of truth for both
+  scripts/seed.py and app/connectors/registry.py, which calls it at the
+  start of every connector run so an attribute added after initial
+  seeding is never silently used without being registered.
 app/connectors/
   base.py         Shared pipeline: identity resolution, price history
                   (never overwritten - old row closed, new row opened),
                   evidence-backed attribute measurements, change detection
                   (a model dropped from a run is marked deprecated, not
-                  deleted; reappearing reactivates it).
+                  deleted; reappearing reactivates it). Third-party
+                  benchmark indices (see openrouter.py below) get their
+                  own EvidenceSource row (type=third_party), separate from
+                  the connector's own official_doc catalog evidence - the
+                  two provenances are never conflated under one row.
   openrouter.py   Real connector: OpenRouter's public, keyless /models API
                   (~470 offerings across ~60 developers, with live pricing
-                  and feature flags). No API key to manage.
+                  and feature flags). No API key to manage. Also extracts,
+                  where the catalog has them: media modality flags beyond
+                  vision (audio in/out, video in), and OpenRouter's own
+                  bundled third-party Artificial Analysis benchmark scores
+                  (intelligence_index D03, coding_index D04, agentic_index
+                  D06) - real relative-capability scores at zero extra
+                  cost, since this data rides along with the same catalog
+                  fetch already used for pricing/identity. Coverage is
+                  partial and never padded: ~96/468 offerings have
+                  intelligence_index, ~166 coding_index, ~136 agentic_index
+                  as of this writing; absent means the source genuinely
+                  has no score for that model, never guessed as 0.
   developer_map.py  Id-prefix -> developer display name (governed data).
   openai_pricing.py, anthropic_pricing.py, google_pricing.py  Direct-
                     from-provider pricing - real web sources, not APIs:
@@ -88,10 +109,24 @@ app/connectors/
                     separate privacy/enterprise page, not yet checked.
 app/relationships/infer.py  UMRG v0 relationship inference: naming-
   convention tiers (Pro/Mini/Nano/Lite suffix, Anthropic's Haiku/Sonnet/
-  Opus line) and evidence-derived substitution (two offerings evaluated
-  on the same task profile with close scores). Both upsert by
-  (type, source_id, target_id), so re-runs update rather than duplicate.
-  Deliberately does NOT invent cross-developer "A substitutes B" claims
+  Opus line), version lineage (same family name with a trailing bare
+  numeric version - "Claude Opus 4.5" -> "Claude Opus 5" -> "Claude Opus
+  5.5" - chained into Model.lineage_parent_id plus a LINEAGE edge per
+  adjacent pair), and evidence-derived substitution (two offerings
+  evaluated on the same task profile with close scores). All three
+  upsert by (type, source_id, target_id), so re-runs update rather than
+  duplicate. Lineage is deliberately conservative: a family whose
+  "versions" mix date codes (e.g. "2407") with small semantic numbers
+  (e.g. "4") is skipped entirely - the two numbering schemes aren't
+  comparable, and sorting them together would misrepresent release
+  order - and codenamed releases (GPT-5.6 "Luna", Gemini "Carbon") are
+  never ordered, since there's no public codename-to-sequence mapping to
+  go on. Against the real catalog this writes 36 lineage edges across 13
+  genuine version chains (Claude Fable/Haiku/Opus/Sonnet, GPT, GLM, Grok,
+  Aion, Mistral Large/Medium/Small, Muse Spark, Pareto) - verified
+  correct both by direct SQL (Claude Opus's full 4.1->4.5->...->5.5 chain)
+  and by loading a real offering page in the dashboard. This module
+  deliberately does NOT invent cross-developer "A substitutes B" claims
   with no evaluation behind them.
 app/services/alternatives.py  Bidirectional relationship traversal
   (v0.1 Section 6.3), shared by GET /v1/alternatives and the MCP
@@ -164,7 +199,7 @@ scripts/
   scheduler_daemon.py  Long-running process wrapping app/scheduler.py -
                     run it as its own service, separate from the web app.
   run_eval.py        CLI to run a REAL evaluation against a live offering.
-tests/            pytest suite against an in-memory SQLite DB (23 tests).
+tests/            pytest suite against an in-memory SQLite DB (102 tests).
 ```
 
 ## Quickstart
@@ -310,12 +345,14 @@ over the actual data.
 ./.venv/Scripts/python.exe -m scripts.derive_relationships
 ```
 
-Run this after the connector (new offerings may complete a tier family)
-or after an eval run (new quality measurements may reveal a close-score
-pair). Against the real catalog this currently writes real tier edges
-(e.g. GPT-5 <-> GPT-5 Mini <-> GPT-5 Nano, GPT-5 <-> GPT-5 Pro, Claude
-Haiku <-> Sonnet <-> Opus per version) at confidence 0.6 (a naming
-heuristic, not a provider confirmation), plus substitution edges wherever
+Run this after the connector (new offerings may complete a tier family or
+a version chain) or after an eval run (new quality measurements may
+reveal a close-score pair). Against the real catalog this currently
+writes real tier edges (e.g. GPT-5 <-> GPT-5 Mini <-> GPT-5 Nano, GPT-5
+<-> GPT-5 Pro, Claude Haiku <-> Sonnet <-> Opus per version) at
+confidence 0.6, real version-lineage edges (e.g. Claude Opus's full
+4.1->4.5->4.6->4.7->4.8->5->5.5 chain) at confidence 0.65 - both naming
+heuristics, not provider confirmations - plus substitution edges wherever
 two offerings have real measured scores within 0.10 of each other on the
 same task profile, at a confidence that scales with how close the scores
 are and how much sample size backs them. `GET /v1/alternatives/{id}`
@@ -392,6 +429,25 @@ google_pricing.py above) but not for OpenAI or Anthropic - neither of
 their pricing pages publishes it; their data-usage policy more likely
 lives on a separate privacy/enterprise page, not yet checked. These are
 the weeks 9-12 and post-MVP items in Section 12 of the concept document.
+
+**Speed as a capability attribute**: confirmed there is no such field
+anywhere in OpenRouter's catalog JSON (checked both top-level keys and
+`top_provider`). Artificial Analysis's own provider leaderboard
+(artificialanalysis.ai/leaderboards/providers) does have real per-
+(provider, model)-endpoint speed data (time-per-task, first-token
+latency) at exactly the granularity this catalog needs - but unlike the
+pricing pages above, the data loads client-side in a Next.js app rather
+than being present in the server-rendered HTML, so scraping it needs
+either their internal data endpoint or a headless-browser fetch per
+connector run - a meaningfully bigger lift than the four connectors
+here. Documented as a real, scoped follow-up, not built.
+
+**Version lineage** (Model.lineage_parent_id / UMRG LINEAGE edges) is
+real but necessarily partial: only developers whose model names end in
+a bare numeric version get a chain at all (see app/relationships/infer.py
+above) - no lineage is inferred for Google's Gemini line (ids almost
+always carry a tier word like "Flash"/"Pro" instead of a bare version)
+or for codenamed OpenAI/GPT releases from 5.6 onward.
 
 No live evaluation has actually been run in this environment - no
 OPENROUTER_API_KEY is configured here, and the runner is built to refuse

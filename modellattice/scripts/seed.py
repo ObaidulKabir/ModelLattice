@@ -16,29 +16,15 @@ Run with: .venv/Scripts/python.exe -m scripts.seed
 import datetime as dt
 import uuid
 
+from app.attribute_registry import ensure_attribute_definitions
 from app.db import Base, SessionLocal, engine
 from app.models.catalog import Deployment, Model, Offering, Provider
 from app.models.decision import TaskProfile
 from app.models.evaluation import EvalResult, EvalRun
-from app.models.measurement import AttributeDefinition, EvidenceSource, Measurement
+from app.models.measurement import EvidenceSource, Measurement
 from app.models.pricing import PricePoint
 from app.models.relationship import Relationship
 from app.models.types import EvidenceType, MeasurementStatus, PriceType, RelationshipType, SubjectType
-
-ATTRIBUTE_DEFINITIONS = [
-    # D02 Modality & I/O
-    dict(key="supports_vision_input", dimension="D02", label="Accepts image input", value_type="bool"),
-    dict(key="max_context_tokens", dimension="D02", label="Maximum context window", value_type="number", unit="tokens"),
-    # D06 Interaction & Agency
-    dict(key="supports_tool_calling", dimension="D06", label="Supports function/tool calling", value_type="bool"),
-    dict(key="supports_json_schema_output", dimension="D06", label="Supports constrained JSON schema output", value_type="bool"),
-    # D07 Quality & Accuracy (contextual to a task profile, see Measurement.context)
-    dict(key="task_quality_score", dimension="D07", label="Task quality score (0-1, contextual to a task profile)", value_type="number"),
-    # D08 Performance & Efficiency
-    dict(key="p95_latency_ms", dimension="D08", label="P95 end-to-end latency", value_type="number", unit="ms"),
-    # D11 Security & Governance
-    dict(key="no_training_on_inputs_attr", dimension="D11", label="Provider confirms no training on customer inputs", value_type="bool"),
-]
 
 NOW = dt.datetime.now(dt.timezone.utc)
 
@@ -51,9 +37,7 @@ def seed():
             print("Seed data already present; skipping. Delete rows manually to reseed.")
             return
 
-        for a in ATTRIBUTE_DEFINITIONS:
-            db.add(AttributeDefinition(**a))
-        db.flush()
+        ensure_attribute_definitions(db)
 
         doc_evidence = EvidenceSource(
             type=EvidenceType.OFFICIAL_DOC.value,

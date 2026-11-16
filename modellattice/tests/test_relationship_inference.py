@@ -11,7 +11,11 @@ from app.models.catalog import Model, Offering, Provider
 from app.models.measurement import Measurement
 from app.models.relationship import Relationship
 from app.models.types import MeasurementStatus, RelationshipType, SubjectType
-from app.relationships.infer import infer_naming_convention_tiers, infer_substitution_from_evidence
+from app.relationships.infer import (
+    infer_naming_convention_tiers,
+    infer_substitution_from_evidence,
+    infer_version_lineage_from_pure_numeric_ids,
+)
 from app.services.alternatives import find_alternatives
 
 
@@ -150,6 +154,66 @@ def test_substitution_not_created_when_scores_too_far_apart(db_session):
     summary = infer_substitution_from_evidence(db_session)
     assert summary.substitution_edges_written == 0
     assert db_session.execute(select(Relationship)).scalars().all() == []
+
+
+def test_version_lineage_chains_adjacent_versions_only(db_session):
+    dev = _provider_and_models(db_session, "TestAnthropic")
+    v45 = _model(db_session, dev, "Claude Opus 4.5")
+    v5 = _model(db_session, dev, "Claude Opus 5")
+    v55 = _model(db_session, dev, "Claude Opus 5.5")
+    db_session.commit()
+
+    summary = infer_version_lineage_from_pure_numeric_ids(db_session)
+    assert summary.lineage_edges_written == 2  # 4.5->5, 5->5.5 (not 4.5->5.5 directly)
+
+    rels = db_session.execute(select(Relationship)).scalars().all()
+    pairs = {(r.source_id, r.target_id) for r in rels}
+    assert (v5.id, v45.id) in pairs  # newer is source, older is target
+    assert (v55.id, v5.id) in pairs
+    assert (v55.id, v45.id) not in pairs  # adjacent only, no skip-level edge
+    assert all(r.type == RelationshipType.LINEAGE.value for r in rels)
+
+    db_session.refresh(v5)
+    db_session.refresh(v55)
+    assert v5.lineage_parent_id == v45.id
+    assert v55.lineage_parent_id == v5.id
+
+
+def test_version_lineage_skips_codenamed_and_tiered_names(db_session):
+    dev = _provider_and_models(db_session, "TestOpenAI")
+    _model(db_session, dev, "GPT-5")
+    _model(db_session, dev, "GPT-5.6 Luna")  # codename suffix, not a bare version
+    _model(db_session, dev, "Gemini 2.5 Flash")  # tier suffix, not a bare version
+
+    summary = infer_version_lineage_from_pure_numeric_ids(db_session)
+    assert summary.lineage_edges_written == 0  # only one bare-numeric model in each family - nothing to chain
+
+
+def test_version_lineage_skips_groups_mixing_date_codes_with_semantic_versions(db_session):
+    dev = _provider_and_models(db_session, "TestMistral")
+    _model(db_session, dev, "Mistral Large 2407")  # date code (year-month)
+    _model(db_session, dev, "Mistral Large 4")  # small semantic version
+    db_session.commit()
+
+    summary = infer_version_lineage_from_pure_numeric_ids(db_session)
+    assert summary.lineage_edges_written == 0  # "2407" fails the <100-per-component check, whole group skipped
+    assert db_session.execute(select(Relationship)).scalars().all() == []
+
+
+def test_version_lineage_rerun_updates_rather_than_duplicates(db_session):
+    dev = _provider_and_models(db_session, "TestAnthropic")
+    _model(db_session, dev, "Claude Opus 4.5")
+    _model(db_session, dev, "Claude Opus 5")
+    db_session.commit()
+
+    infer_version_lineage_from_pure_numeric_ids(db_session)
+    first_count = len(db_session.execute(select(Relationship)).scalars().all())
+
+    summary2 = infer_version_lineage_from_pure_numeric_ids(db_session)
+    second_count = len(db_session.execute(select(Relationship)).scalars().all())
+
+    assert first_count == second_count == 1
+    assert summary2.lineage_edges_written == 0  # updated in place, not counted as newly written
 
 
 def test_find_alternatives_resolves_both_directions(db_session):
