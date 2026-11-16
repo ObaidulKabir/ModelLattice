@@ -27,10 +27,21 @@ mcp_server/
   server.py       MCP tools (find_models, recommend_model, compare_models,
                   estimate_cost, get_alternatives, report_outcome), calling
                   the same service layer as the REST API.
+app/connectors/
+  base.py         Shared pipeline: identity resolution, price history
+                  (never overwritten - old row closed, new row opened),
+                  evidence-backed attribute measurements, change detection
+                  (a model dropped from a run is marked deprecated, not
+                  deleted; reappearing reactivates it).
+  openrouter.py   Real connector: OpenRouter's public, keyless /models API
+                  (~470 offerings across ~60 developers, with live pricing
+                  and feature flags). No API key to manage.
+  developer_map.py  Id-prefix -> developer display name (governed data).
 migrations/       Alembic migrations (Postgres is the system of record).
-scripts/seed.py   Illustrative dev data: 3 providers, 4 offerings, pricing,
-                  one eval per offering, one lineage + two substitution
-                  relationships.
+scripts/
+  seed.py           Illustrative dev data: 3 providers, 4 offerings,
+                    pricing, one eval per offering, relationships.
+  run_connectors.py  CLI to run a connector and print an ingest summary.
 tests/            pytest suite against an in-memory SQLite DB.
 ```
 
@@ -45,9 +56,19 @@ cp .env.example .env                       # adjust DATABASE_URL if needed
 ./.venv/Scripts/python.exe -m alembic upgrade head
 ./.venv/Scripts/python.exe -m scripts.seed
 
+# Real catalog data from a public, keyless API - no credentials needed:
+./.venv/Scripts/python.exe -m scripts.run_connectors openrouter
+
 ./.venv/Scripts/python.exe -m uvicorn app.main:app --reload --port 8008
 # -> http://127.0.0.1:8008/docs
 ```
+
+Re-running `scripts.run_connectors` is safe and idempotent: unchanged
+offerings/prices/measurements write nothing new, changed prices close the
+old `price_point` row and open a new one (full history preserved), and any
+offering that disappears from the listing is marked `deprecated` (not
+deleted) - reappearing later reactivates it. See `tests/test_connectors.py`
+for the behavior this guarantees.
 
 Run the MCP server (stdio) instead of/alongside the REST API:
 
@@ -109,8 +130,12 @@ Other endpoints: `GET /v1/models`, `GET /v1/offerings`, `GET /v1/compare`,
 
 Per the MVP scope in the concept doc (Section 5.2): no survey engine, no
 blind pairwise comparisons, no multi-hop path traversal, no hysteresis/
-switching-cost modelling, no cross-tenant aggregation, no real provider
-connectors (the seed script stands in for them), no evaluation runner
-(eval_run/eval_result rows are seeded directly rather than produced by a
-scheduled job), no auth beyond a single shared API key. These are the
-weeks 5-12 and post-MVP items in Section 12 of the concept document.
+switching-cost modelling, no cross-tenant aggregation, no scheduled/
+automated connector runs (run manually or via your own cron for now), no
+evaluation runner (eval_run/eval_result rows are seeded directly rather
+than produced by a scheduled job - the OpenRouter connector gives real
+identity/pricing/feature evidence but not quality evidence), no auth
+beyond a single shared API key, and only one connector (OpenRouter) rather
+than direct-from-provider connectors, so no per-region Deployment rows or
+training-data-policy evidence yet. These are the weeks 3-12 and post-MVP
+items in Section 12 of the concept document.

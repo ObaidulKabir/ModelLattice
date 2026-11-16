@@ -8,7 +8,7 @@ separate again from a specific Deployment (region/hardware/serving config).
 import datetime as dt
 import uuid
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, func
+from sqlalchemy import JSON, DateTime, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -32,6 +32,9 @@ class Model(Base):
     """Canonical model identity, independent of who hosts it."""
 
     __tablename__ = "model"
+    __table_args__ = (
+        UniqueConstraint("developer_id", "family", "version", name="uq_model_developer_family_version"),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     family: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -57,6 +60,9 @@ class Offering(Base):
     identity (v0.1 Glossary: Offering)."""
 
     __tablename__ = "offering"
+    __table_args__ = (
+        UniqueConstraint("provider_id", "provider_model_name", name="uq_offering_provider_model_name"),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     model_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("model.id"), nullable=False)
