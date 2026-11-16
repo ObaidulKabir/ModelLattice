@@ -5,9 +5,12 @@ APScheduler timing - build_scheduler() just wires a real library's
 BackgroundScheduler, which is APScheduler's own job to get right; what's
 ours to test is refresh_all_job's behavior.
 """
+import dataclasses
+
 from app.connectors import registry
+from app.connectors.base import ingest as base_ingest
 from app.connectors.registry import run_all_connectors, run_connector
-from app.models.types import EvidenceType
+from app.models.types import EvidenceType, ProviderType
 from app.scheduler import refresh_connectors_job
 
 
@@ -50,8 +53,13 @@ def test_one_broken_connector_does_not_block_the_others(monkeypatch, db_session)
         raise RuntimeError("provider is down")
 
     fake_connectors = {
-        "good": {"fetch": _good, "url": "https://good.invalid", "host_provider_name": "GoodHost",
-                 "evidence_type": EvidenceType.OFFICIAL_DOC.value, "method": "test"},
+        "good": {
+            "fetch": _good, "url": "https://good.invalid", "host_provider_name": "GoodHost",
+            "evidence_type": EvidenceType.OFFICIAL_DOC.value, "method": "test",
+            "ingest": lambda db, items, evidence: dataclasses.asdict(
+                base_ingest(db, "GoodHost", ProviderType.HOST.value, items, evidence)
+            ),
+        },
         "broken": {"fetch": _boom, "url": "https://bad.invalid", "host_provider_name": "BadHost",
                    "evidence_type": EvidenceType.OFFICIAL_DOC.value, "method": "test"},
     }
@@ -64,7 +72,7 @@ def test_one_broken_connector_does_not_block_the_others(monkeypatch, db_session)
     assert by_name["broken"].ok is False
     assert "provider is down" in by_name["broken"].error
     assert by_name["good"].ok is True
-    assert by_name["good"].summary.offerings_created == 1
+    assert by_name["good"].summary["offerings_created"] == 1
 
     # The job wrapper (what the scheduler actually calls) must also survive this.
     refresh_connectors_job()  # should not raise

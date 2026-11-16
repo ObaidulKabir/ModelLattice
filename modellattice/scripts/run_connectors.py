@@ -6,8 +6,9 @@ See app/connectors/registry.py for the actual fetch+ingest logic, shared
 with app/scheduler.py for periodic/automated runs.
 
 Usage:
-    .venv/Scripts/python.exe -m scripts.run_connectors            # all
-    .venv/Scripts/python.exe -m scripts.run_connectors openrouter # one
+    .venv/Scripts/python.exe -m scripts.run_connectors                 # all
+    .venv/Scripts/python.exe -m scripts.run_connectors openrouter      # one
+    .venv/Scripts/python.exe -m scripts.run_connectors openai_pricing  # one
 """
 import sys
 
@@ -27,12 +28,8 @@ def main() -> None:
             print(f"[{name}] FAILED: {result.error}")
             continue
 
-        s = result.summary
-        print(f"[{name}] offerings_seen={s.offerings_seen}")
-        print(f"[{name}] providers_created={s.providers_created} models_created={s.models_created}")
-        print(f"[{name}] offerings_created={s.offerings_created} offerings_reactivated={s.offerings_reactivated}")
-        print(f"[{name}] price_points_written={s.price_points_written} measurements_written={s.measurements_written}")
-        print(f"[{name}] offerings_deprecated_this_run={s.offerings_deprecated}")
+        for key, value in (result.summary or {}).items():
+            print(f"[{name}] {key}={value}")
 
 
 if __name__ == "__main__":

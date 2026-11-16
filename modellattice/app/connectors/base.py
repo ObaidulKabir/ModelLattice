@@ -90,7 +90,7 @@ def _get_or_create_offering(db: Session, model_id: uuid.UUID, provider_id: uuid.
     return offering, True
 
 
-def _upsert_price(db: Session, offering_id: uuid.UUID, price_type: str, amount_per_1m: float, evidence_id: uuid.UUID, now: dt.datetime) -> bool:
+def upsert_price(db: Session, offering_id: uuid.UUID, price_type: str, amount_per_1m: float, evidence_id: uuid.UUID, now: dt.datetime) -> bool:
     """Returns True if a new price_point row was written (price changed or
     this is the first observation)."""
     current = db.execute(
@@ -190,10 +190,10 @@ def ingest(db: Session, host_provider_name: str, host_provider_type: str, items:
         seen_offering_ids.add(offering.id)
 
         if raw.price_input_per_token_usd is not None:
-            changed = _upsert_price(db, offering.id, PriceType.INPUT_TOKEN.value, raw.price_input_per_token_usd * 1_000_000, evidence.id, now)
+            changed = upsert_price(db, offering.id, PriceType.INPUT_TOKEN.value, raw.price_input_per_token_usd * 1_000_000, evidence.id, now)
             summary.price_points_written += int(changed)
         if raw.price_output_per_token_usd is not None:
-            changed = _upsert_price(db, offering.id, PriceType.OUTPUT_TOKEN.value, raw.price_output_per_token_usd * 1_000_000, evidence.id, now)
+            changed = upsert_price(db, offering.id, PriceType.OUTPUT_TOKEN.value, raw.price_output_per_token_usd * 1_000_000, evidence.id, now)
             summary.price_points_written += int(changed)
 
         written = 0

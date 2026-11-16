@@ -30,13 +30,11 @@ def refresh_connectors_job() -> None:
     results = run_all_connectors()
     for r in results:
         if r.ok:
-            s = r.summary
-            logger.info(
-                "[%s] ok: seen=%d created(providers=%d models=%d offerings=%d) "
-                "prices_written=%d measurements_written=%d deprecated=%d",
-                r.name, s.offerings_seen, s.providers_created, s.models_created, s.offerings_created,
-                s.price_points_written, s.measurements_written, s.offerings_deprecated,
-            )
+            # Each connector's summary dict has its own shape (see
+            # app/connectors/registry.py) - logged generically rather
+            # than assuming one connector's field names fit all of them.
+            metrics = ", ".join(f"{k}={v}" for k, v in (r.summary or {}).items())
+            logger.info("[%s] ok: %s", r.name, metrics)
         else:
             logger.error("[%s] FAILED: %s", r.name, r.error)
 

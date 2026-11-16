@@ -44,6 +44,23 @@ app/connectors/
                   (~470 offerings across ~60 developers, with live pricing
                   and feature flags). No API key to manage.
   developer_map.py  Id-prefix -> developer display name (governed data).
+  openai_pricing.py  Direct-from-OpenAI pricing - a real web source, not
+                    an API: fetches https://developers.openai.com/api/docs/pricing
+                    directly over plain HTTP (the pricing table is
+                    embedded as JSON inside server-rendered HTML, no
+                    browser needed) and cross-checks it against
+                    OpenRouter's resale pricing for the same models.
+                    Only parses the one row shape ([input, cached,
+                    output]) empirically confirmed against known
+                    pricing; skips richer rows rather than guess their
+                    column order. Never invents a Model from a raw
+                    OpenAI slug - only attaches a new Offering to a
+                    Model it can already find via the existing
+                    "openai/{slug}" Offering from the openrouter
+                    connector, so it can't repeat the free/batch
+                    duplicate-identity bug fixed earlier in this
+                    project. An unmatched slug is skipped and counted,
+                    not guessed.
 app/relationships/infer.py  UMRG v0 relationship inference: naming-
   convention tiers (Pro/Mini/Nano/Lite suffix, Anthropic's Haiku/Sonnet/
   Opus line) and evidence-derived substitution (two offerings evaluated
@@ -130,6 +147,10 @@ cp .env.example .env                       # adjust DATABASE_URL if needed
 
 # Real catalog data from a public, keyless API - no credentials needed:
 ./.venv/Scripts/python.exe -m scripts.run_connectors openrouter
+
+# A second, independent real source: OpenAI's own pricing page, fetched
+# directly (not via OpenRouter) and cross-checked against it:
+./.venv/Scripts/python.exe -m scripts.run_connectors openai_pricing
 
 ./.venv/Scripts/python.exe -m uvicorn app.main:app --reload --port 8008
 # -> http://127.0.0.1:8008/docs
@@ -328,15 +349,13 @@ Other endpoints: `GET /v1/models`, `GET /v1/offerings`, `GET /v1/compare`,
 
 Per the MVP scope in the concept doc (Section 5.2): no survey engine, no
 blind pairwise comparisons, no multi-hop path traversal, no hysteresis/
-switching-cost modelling, no cross-tenant aggregation, no scheduled/
-automated connector or eval runs (run manually or via your own cron for
-now), no LLM-judge scorer yet (so `rag-qa`, `tool-use-agent` and
-`summarization` are defined in the concept doc but have no task bank
-here), no auth beyond a single shared API key, and only one connector
-(OpenRouter) rather than direct-from-provider connectors, so no
-per-region Deployment rows or training-data-policy evidence yet. These
-are the weeks 6-12 and post-MVP items in Section 12 of the concept
-document.
+switching-cost modelling, no cross-tenant aggregation, no scheduled
+evaluations (deliberate - see "Keeping the catalog fresh automatically"
+above), no auth beyond a single shared API key, and still no per-region
+Deployment rows or training-data-policy evidence for any real offering
+(neither OpenRouter's listing nor OpenAI's pricing page publishes
+either). These are the weeks 9-12 and post-MVP items in Section 12 of
+the concept document.
 
 No live evaluation has actually been run in this environment - no
 OPENROUTER_API_KEY is configured here, and the runner is built to refuse
