@@ -85,6 +85,18 @@ def test_offerings_list_context_window_blank_when_unknown(client, db_session):
     assert "Context window" in r.text  # column header present even with no data
 
 
+def test_static_logo_assets_are_served(client):
+    assert client.get("/static/icon.svg").status_code == 200
+    assert client.get("/static/logo-mark.svg").status_code == 200
+
+
+def test_dashboard_references_favicon_and_header_mark(client, db_session):
+    _seed_one_offering(db_session)
+    r = client.get("/dashboard")
+    assert '/static/icon.svg' in r.text
+    assert '/static/logo-mark.svg' in r.text
+
+
 def test_offering_detail_renders(client, db_session):
     offering = _seed_one_offering(db_session)
     r = client.get(f"/dashboard/offerings/{offering.id}")

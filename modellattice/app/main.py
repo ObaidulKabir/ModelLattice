@@ -5,6 +5,7 @@ own routers/services so any of them can later be extracted into its own
 service without changing the external contracts in app/schemas.
 """
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app.api import catalog, dashboard, feedback, recommend
 from app.config import get_settings
@@ -17,6 +18,8 @@ app = FastAPI(
     description="Explainable, evidence-backed AI model decision intelligence.",
     version=get_build_version(),
 )
+
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 app.include_router(catalog.router)
 app.include_router(recommend.router)

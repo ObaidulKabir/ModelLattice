@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>{% block title %}ModelLattice{% endblock %} · ModelLattice</title>
+<link rel="icon" type="image/svg+xml" href="/static/icon.svg">
 <style>
   :root {
     --navy: #17324D; --ink: #24313C; --blue: #27628C; --teal: #167D78;
@@ -12,7 +13,8 @@
   body { font-family: -apple-system, Segoe UI, Arial, sans-serif; color: var(--ink); background: var(--bg); margin: 0; }
   header { background: var(--navy); color: #fff; padding: 14px 24px; display: flex; align-items: center; gap: 24px; }
   header a { color: #fff; text-decoration: none; font-weight: 600; }
-  header a.brand { font-size: 18px; letter-spacing: 0.5px; }
+  header a.brand { font-size: 18px; letter-spacing: 0.5px; display: flex; align-items: center; gap: 10px; }
+  header a.brand img { height: 26px; width: 26px; }
   header nav a { color: #C9D9E8; font-weight: 500; }
   header nav a:hover { color: #fff; }
   main { max-width: 1200px; margin: 0 auto; padding: 24px; }
@@ -47,7 +49,7 @@
 </head>
 <body>
 <header>
-  <a class="brand" href="/dashboard">ModelLattice</a>
+  <a class="brand" href="/dashboard"><img src="/static/logo-mark.svg" alt=""> ModelLattice</a>
   <nav>
     <a href="/dashboard">Overview</a>
     &nbsp;&nbsp;<a href="/dashboard/offerings">Offerings</a>

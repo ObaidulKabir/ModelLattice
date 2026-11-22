@@ -24,6 +24,12 @@ app/
   api/            FastAPI routers: catalog, recommend, feedback, dashboard.
   templates/      Server-rendered Jinja2 templates for the internal
                   dashboard below - no SPA, no build step.
+  static/         icon.svg (favicon / app-icon, navy rounded-square
+                  backdrop) and logo-mark.svg (the same triangular-
+                  lattice glyph, transparent, for the dashboard header
+                  where it sits directly on the navy header bar) - hand-
+                  authored SVG, no image-generation tool used. Mounted
+                  at /static in app/main.py.
   main.py         App entrypoint.
   version.py      Build versioning policy: the human-managed release
                   version from pyproject.toml, combined with a build
@@ -240,7 +246,7 @@ scripts/
   scheduler_daemon.py  Long-running process wrapping app/scheduler.py -
                     run it as its own service, separate from the web app.
   run_eval.py        CLI to run a REAL evaluation against a live offering.
-tests/            pytest suite against an in-memory SQLite DB (120 tests).
+tests/            pytest suite against an in-memory SQLite DB (122 tests).
 Dockerfile, .dockerignore, docker-compose.yml  Containerizes the app
   itself (postgres was already containerized) - an `app` service
   (migrations then uvicorn) and a profile-gated `scheduler` service, so
