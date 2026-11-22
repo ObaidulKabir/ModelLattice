@@ -1,0 +1,13 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.git/
+.env
+.claude/
+modellattice.egg-info/
+tests/
+*.db
+*.sqlite3

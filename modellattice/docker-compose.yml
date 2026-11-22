@@ -15,5 +15,45 @@ services:
       timeout: 5s
       retries: 10
 
+  app:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      # Overrides .env's DATABASE_URL (which points at localhost:5455 for
+      # host-machine dev) - inside the compose network the DB is reachable
+      # as "postgres" on its own container port, not the host-mapped one.
+      DATABASE_URL: postgresql+psycopg://modellattice:modellattice@postgres:5432/modellattice
+    ports:
+      - "8008:8008"
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8008"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8008/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Periodic connector refresh (app/scheduler.py) as its own long-running
+  # container - see scripts/scheduler_daemon.py's docstring for why this
+  # is a separate process from `app`. Deliberately NOT started by a plain
+  # `docker compose up`: opt in with `docker compose --profile scheduler up`.
+  # Never runs the evaluation runner (real money per call, stays a
+  # deliberate `docker compose run --rm app python -m scripts.run_eval ...`).
+  scheduler:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://modellattice:modellattice@postgres:5432/modellattice
+    command: python -m scripts.scheduler_daemon
+    profiles:
+      - scheduler
+
 volumes:
   pgdata:

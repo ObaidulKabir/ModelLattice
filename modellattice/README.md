@@ -232,12 +232,17 @@ scripts/
                     run it as its own service, separate from the web app.
   run_eval.py        CLI to run a REAL evaluation against a live offering.
 tests/            pytest suite against an in-memory SQLite DB (111 tests).
+Dockerfile, .dockerignore, docker-compose.yml  Containerizes the app
+  itself (postgres was already containerized) - an `app` service
+  (migrations then uvicorn) and a profile-gated `scheduler` service, so
+  a plain `docker compose up` never runs the periodic refresh
+  unattended. See "Running fully in Docker" below.
 ```
 
 ## Quickstart
 
 ```bash
-docker compose up -d                       # Postgres on localhost:5455
+docker compose up -d postgres              # Postgres on localhost:5455
 python3 -m venv .venv
 ./.venv/Scripts/python.exe -m pip install -e ".[dev]"
 cp .env.example .env                       # adjust DATABASE_URL if needed
@@ -267,6 +272,27 @@ old `price_point` row and open a new one (full history preserved), and any
 offering that disappears from the listing is marked `deprecated` (not
 deleted) - reappearing later reactivates it. See `tests/test_connectors.py`
 for the behavior this guarantees.
+
+### Running fully in Docker
+
+No Python/venv setup needed - the API and dashboard run in a container too:
+
+```bash
+cp .env.example .env                       # adjust if needed; real secrets (OPENROUTER_API_KEY) go here, never in docker-compose.yml
+docker compose up -d                       # postgres + app; app runs migrations, then serves on :8008
+docker compose exec app python -m scripts.seed                                  # illustrative dev data, OR:
+docker compose exec app python -m scripts.run_connectors openrouter epoch_ai    # real catalog data
+```
+
+`app`'s container command is `alembic upgrade head && uvicorn ...` - migrations
+run automatically on every start (idempotent, schema-only, no data decisions),
+but seeding and the connectors stay manual/explicit, same as the native
+workflow above. The periodic scheduler (`app/scheduler.py`) is its own
+container, profile-gated so a plain `docker compose up` never starts it
+unattended: `docker compose --profile scheduler up -d scheduler`. The
+evaluation runner is never containerized as a long-running service - it
+spends real money per call and stays a one-off: `docker compose run --rm
+app python -m scripts.run_eval ...`.
 
 ### Running a real evaluation
 
