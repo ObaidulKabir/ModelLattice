@@ -313,12 +313,22 @@ too). Two things this repo's layout requires you to set explicitly:
   in Railway's Settings -> Source, or Railway won't find a `Dockerfile`
   to build at all.
 - **Add a Postgres database** (Railway's own Postgres plugin, or any
-  reachable one) and set this service's `DATABASE_URL` env var to it -
-  `postgresql+psycopg://...` (keep the `+psycopg` driver suffix; Railway's
-  own reference variable is plain `postgresql://`, which SQLAlchemy
-  can't load a driver for on its own). Nothing else needs setting -
-  `$PORT` is supplied by Railway automatically and the Dockerfile already
-  reads it.
+  reachable one) and set this service's `DATABASE_URL` variable to
+  Railway's own reference, exactly as its "Connect" dialog gives it:
+  `${{ Postgres.DATABASE_PRIVATE_URL }}`. That value comes back as a bare
+  `postgresql://...` with no driver suffix - `app/config.py`'s
+  `Settings.database_url` validator normalizes it (and the legacy
+  `postgres://` scheme some hosts still use) to `postgresql+psycopg://`
+  automatically, so the host's own reference variable can be used as-is,
+  no manual rewriting needed. Nothing else needs setting - `$PORT` is
+  supplied by Railway automatically and the Dockerfile already reads it.
+
+  A deployment that builds successfully and then crashes a few seconds
+  later, with a traceback ending in `connection to server at "127.0.0.1",
+  port 5432 failed: Connection refused`, means this variable isn't set
+  at all (that's the local-dev-only fallback in `Settings.database_url`,
+  which doesn't exist inside the container) - check the service's
+  Variables tab.
 
 ### Running a real evaluation
 
