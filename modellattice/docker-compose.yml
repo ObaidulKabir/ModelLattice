@@ -27,9 +27,9 @@ services:
       # host-machine dev) - inside the compose network the DB is reachable
       # as "postgres" on its own container port, not the host-mapped one.
       DATABASE_URL: postgresql+psycopg://modellattice:modellattice@postgres:5432/modellattice
+      PORT: "8008"
     ports:
       - "8008:8008"
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8008"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8008/health')"]
       interval: 10s

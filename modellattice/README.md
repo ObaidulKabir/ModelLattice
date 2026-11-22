@@ -284,15 +284,41 @@ docker compose exec app python -m scripts.seed                                  
 docker compose exec app python -m scripts.run_connectors openrouter epoch_ai    # real catalog data
 ```
 
-`app`'s container command is `alembic upgrade head && uvicorn ...` - migrations
-run automatically on every start (idempotent, schema-only, no data decisions),
-but seeding and the connectors stay manual/explicit, same as the native
-workflow above. The periodic scheduler (`app/scheduler.py`) is its own
-container, profile-gated so a plain `docker compose up` never starts it
-unattended: `docker compose --profile scheduler up -d scheduler`. The
-evaluation runner is never containerized as a long-running service - it
-spends real money per call and stays a one-off: `docker compose run --rm
-app python -m scripts.run_eval ...`.
+The `Dockerfile`'s own CMD is `alembic upgrade head && uvicorn ... --port
+${PORT:-8008}` - migrations run automatically on every start (idempotent,
+schema-only, no data decisions), and the port is read from `$PORT` when a
+host provides one (falls back to 8008 locally) - deliberately in the
+Dockerfile itself, not only in docker-compose.yml, since a PaaS host
+builds straight from the Dockerfile and never reads compose files (see
+"Deploying to Railway" below). Seeding and the connectors stay manual/
+explicit, same as the native workflow above. The periodic scheduler
+(`app/scheduler.py`) is its own container, profile-gated so a plain
+`docker compose up` never starts it unattended: `docker compose
+--profile scheduler up -d scheduler`. The evaluation runner is never
+containerized as a long-running service - it spends real money per call
+and stays a one-off: `docker compose run --rm app python -m
+scripts.run_eval ...`.
+
+### Deploying to Railway
+
+Railway builds a service straight from its `Dockerfile` - it does not read
+`docker-compose.yml` (multiple compose services don't become multiple
+Railway services automatically; set each one up as its own Railway
+service pointed at the same repo if you want `scheduler` running there
+too). Two things this repo's layout requires you to set explicitly:
+
+- **Root Directory**: this repo's actual app lives in a `modellattice/`
+  subfolder (the two `.docx` concept documents live alongside it at the
+  real repo root) - set the service's Root Directory to `modellattice`
+  in Railway's Settings -> Source, or Railway won't find a `Dockerfile`
+  to build at all.
+- **Add a Postgres database** (Railway's own Postgres plugin, or any
+  reachable one) and set this service's `DATABASE_URL` env var to it -
+  `postgresql+psycopg://...` (keep the `+psycopg` driver suffix; Railway's
+  own reference variable is plain `postgresql://`, which SQLAlchemy
+  can't load a driver for on its own). Nothing else needs setting -
+  `$PORT` is supplied by Railway automatically and the Dockerfile already
+  reads it.
 
 ### Running a real evaluation
 
