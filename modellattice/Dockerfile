@@ -11,6 +11,11 @@ COPY alembic.ini ./
 
 RUN pip install --no-cache-dir .
 
+# Build versioning policy (app/version.py): a fresh timestamp every build,
+# with zero manual bump effort and no dependency on git being in the
+# build context (.dockerignore deliberately excludes .git).
+RUN date -u +"%Y-%m-%dT%H:%M:%SZ" > BUILD_TIMESTAMP
+
 EXPOSE 8008
 
 # Shell form so ${PORT} expands: Railway (and most PaaS hosts) assign a

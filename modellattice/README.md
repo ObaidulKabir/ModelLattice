@@ -25,6 +25,15 @@ app/
   templates/      Server-rendered Jinja2 templates for the internal
                   dashboard below - no SPA, no build step.
   main.py         App entrypoint.
+  version.py      Build versioning policy: the human-managed release
+                  version from pyproject.toml, combined with a build
+                  timestamp the Dockerfile stamps into the image at
+                  build time (never git-SHA-based - .dockerignore
+                  deliberately excludes .git). Updates automatically on
+                  every build, zero manual bump effort. Shown in the
+                  FastAPI `version` field (visible on /docs), GET
+                  /health, and the dashboard footer on every page.
+                  Falls back to "dev" for an un-dockerized local run.
 mcp_server/
   server.py       MCP tools (find_models, recommend_model, compare_models,
                   estimate_cost, get_alternatives, report_outcome,
@@ -231,7 +240,7 @@ scripts/
   scheduler_daemon.py  Long-running process wrapping app/scheduler.py -
                     run it as its own service, separate from the web app.
   run_eval.py        CLI to run a REAL evaluation against a live offering.
-tests/            pytest suite against an in-memory SQLite DB (111 tests).
+tests/            pytest suite against an in-memory SQLite DB (120 tests).
 Dockerfile, .dockerignore, docker-compose.yml  Containerizes the app
   itself (postgres was already containerized) - an `app` service
   (migrations then uvicorn) and a profile-gated `scheduler` service, so

@@ -25,9 +25,11 @@ from app.models.types import OfferingLifecycle
 from app.monitoring.regression import check_regression
 from app.services.alternatives import find_alternatives
 from app.services.cost import get_current_prices
+from app.version import get_build_version
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 templates = Jinja2Templates(directory="app/templates")
+templates.env.globals["build_version"] = get_build_version()
 
 PAGE_SIZE = 50
 
