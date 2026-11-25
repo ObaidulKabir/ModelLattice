@@ -58,6 +58,14 @@ def estimate_cost_per_1k_tasks(
     if input_pp.unit != "per_1m_tokens" or output_pp.unit != "per_1m_tokens":
         return None, None
 
+    # A negative amount is not a real price: OpenRouter's variable-price
+    # routers (e.g. openrouter/auto) encode "price depends on the routed
+    # model" as -1 per token, which arrives here as -$1,000,000 per 1M.
+    # Treat as unknown rather than letting it corrupt every cost comparison.
+    # Strictly < 0: $0 is a legitimate price (free tiers) and must stay valid.
+    if input_pp.amount < 0 or output_pp.amount < 0:
+        return None, None
+
     cost_per_task = (avg_input_tokens / 1_000_000) * input_pp.amount + (
         avg_output_tokens / 1_000_000
     ) * output_pp.amount

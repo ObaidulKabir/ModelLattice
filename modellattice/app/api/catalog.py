@@ -14,6 +14,7 @@ from app.monitoring.regression import check_regression
 from app.schemas.catalog import ModelOut, OfferingOut, PricePointOut
 from app.services.alternatives import find_alternatives
 from app.services.cost import estimate_cost_per_1k_tasks, get_current_prices
+from app.services.ranking import COST_KEY, DimensionWeight, RankingError, rank_offerings, rank_sort_key, resolve_dimension, validate_mode
 from app.services.recommender import evaluate_offerings
 
 router = APIRouter(prefix="/v1", tags=["catalog"])
@@ -100,12 +101,15 @@ def offering_regression(
 def compare_offerings(
     offering_ids: list[uuid.UUID] = Query(..., alias="offering"),
     task_profile: str | None = Query(default=None),
+    dimension: list[str] = Query(default=[], description="rank by this dimension; repeatable (e.g. intelligence_index, coding_index, cost_per_1k_tasks_usd)"),
+    weight: list[float] = Query(default=[], description="weight per `dimension`, in the same order; defaults to 1.0 each"),
+    mode: str = Query(default="relative", description="relative (within these offerings) | absolute (percentile vs the whole catalog)"),
     db: Session = Depends(get_db),
 ):
     candidates = evaluate_offerings(db, offering_ids, task_profile)
     if not candidates:
         raise HTTPException(status_code=404, detail="no matching offerings found")
-    return [
+    rows = [
         {
             "offering_id": c.offering.id,
             "provider_name": c.provider_name,
@@ -121,6 +125,42 @@ def compare_offerings(
         }
         for c in candidates
     ]
+    if not dimension:
+        return rows  # unchanged legacy behavior: no ranking, no new keys
+
+    if weight and len(weight) != len(dimension):
+        raise HTTPException(status_code=422, detail="`weight` must be omitted or have one value per `dimension`")
+    try:
+        validate_mode(mode)
+        for key in dimension:
+            resolve_dimension(key)
+        weights = [DimensionWeight(k, weight[i] if weight else 1.0) for i, k in enumerate(dimension)]
+        ranked = rank_offerings(
+            db, [c.offering for c in candidates], weights, mode, task_profile=task_profile,
+            precomputed_values={COST_KEY: {c.offering.id: c.cost_per_1k_tasks_usd for c in candidates}},
+        )
+    except RankingError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    by_id = {r["offering_id"]: r for r in rows}
+    ordered_ids = sorted(by_id, key=lambda oid: rank_sort_key(ranked[oid]))
+    out = []
+    for position, oid in enumerate(ordered_ids, start=1):
+        r = ranked[oid]
+        out.append(
+            {
+                **by_id[oid],
+                "rank": position,
+                "mode": mode,
+                "composite_score": r.composite_score,
+                "coverage": r.coverage,
+                "capability_scores": [
+                    {"attribute_key": s.attribute_key, "raw_value": s.raw_value, "normalized_score": s.normalized_score}
+                    for s in r.dimension_scores
+                ],
+            }
+        )
+    return out
 
 
 @router.get("/alternatives/{offering_id}")

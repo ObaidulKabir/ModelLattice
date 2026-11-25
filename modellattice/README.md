@@ -19,7 +19,13 @@ app/
                   eval runs, UMFR feedback, the recommendation audit log.
   schemas/        Pydantic request/response contracts.
   services/
-    cost.py        Cost-per-1k-tasks estimation from current pricing.
+    cost.py        Cost-per-1k-tasks estimation from current pricing. A
+                    negative price is treated as unknown, not a number:
+                    OpenRouter's variable-price routers (openrouter/auto)
+                    report -1 per token, i.e. -$1,000,000 per 1M, which
+                    would corrupt every cost comparison. $0 stays valid
+                    (real free tiers). A fuller explicit pricing-state
+                    model (known/variable/free/unavailable) is future work.
     recommender.py UMNE v0: hard filters -> Pareto ranking -> policy order.
   api/            FastAPI routers: catalog, recommend, feedback, dashboard.
   templates/      Server-rendered Jinja2 templates for the internal
@@ -179,6 +185,40 @@ app/services/alternatives.py  Bidirectional relationship traversal
   (v0.1 Section 6.3), shared by GET /v1/alternatives and the MCP
   get_alternatives tool - an edge A->B is traversable from B's side too,
   using the independently-worded reverse_profile.
+app/services/ranking.py  Ranks offerings by any numeric UMIM capability
+  dimension (intelligence_index, coding_index, agentic_index,
+  parameter_count, training_compute_flop, max_context_tokens,
+  p95_latency_ms, task_quality_score, plus cost_per_1k_tasks_usd), in two
+  modes shared by GET /v1/compare, POST /v1/recommend (policy
+  `capability_weighted`) and the dashboard's offerings list:
+  - relative: min-max within the set being compared (generalizes the
+    `balanced` policy's cost/quality math). Scores only mean something
+    inside that set - "best of these 3".
+  - absolute: PERCENTILE RANK against the whole catalog ("top 7% of all
+    models"), comparable across queries. Percentile rather than min-max
+    against the catalog range because several dimensions span orders of
+    magnitude (training compute 9.6e22 to 9.4e26 - linear scoring would put
+    the median model at ~0.4%); relative mode log-transforms those too.
+  The catalog reference set uses only the LATEST measurement per subject
+  (measurements are append-only history), one value per model (OpenRouter
+  lists :free/:batch/multi-host variants of the same model), and skips
+  deprecated/retired offerings. Unknown is not unsupported: a missing
+  value is null, never 0, and never drops the candidate. Because averaging
+  only known dimensions would let a sparsely-evidenced model beat a well-
+  evidenced one, every result carries `coverage` (known weight / requested
+  weight) and full-coverage candidates sort first - e.g. Claude Opus 5.5
+  (top reasoning score, no published parameter count) ranks below GLM 5.3
+  when both reasoning and parameter_count are requested. Examples:
+    GET /v1/compare?offering=<id>&offering=<id>&dimension=intelligence_index&dimension=coding_index&weight=2&weight=1&mode=absolute
+    POST /v1/recommend {"policy":"capability_weighted","mode":"absolute",
+      "dimensions":[{"attribute_key":"intelligence_index","weight":2},
+                    {"attribute_key":"cost_per_1k_tasks_usd"}]}
+    /dashboard/offerings?dim=training_compute_flop&mode=absolute
+  Without `dimension`/`dimensions` every existing endpoint behaves exactly
+  as before. `capability_weighted` deliberately does not require quality
+  evaluations (cost and quality are opt-in dimensions), so it works on a
+  catalog where nothing has been evaluated yet. Not yet exposed through the
+  MCP tools.
 scripts/derive_relationships.py  CLI to run both inference methods.
 scripts/repair_model_identity.py  One-time (idempotent) cleanup for a real
   data bug found after the first live connector runs: OpenRouter's
@@ -246,7 +286,7 @@ scripts/
   scheduler_daemon.py  Long-running process wrapping app/scheduler.py -
                     run it as its own service, separate from the web app.
   run_eval.py        CLI to run a REAL evaluation against a live offering.
-tests/            pytest suite against an in-memory SQLite DB (122 tests).
+tests/            pytest suite against an in-memory SQLite DB (152 tests).
 Dockerfile, .dockerignore, docker-compose.yml  Containerizes the app
   itself (postgres was already containerized) - an `app` service
   (migrations then uvicorn) and a profile-gated `scheduler` service, so

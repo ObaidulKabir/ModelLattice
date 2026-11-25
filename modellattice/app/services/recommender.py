@@ -24,6 +24,14 @@ from app.models.measurement import Measurement
 from app.models.types import MeasurementStatus, OfferingLifecycle, SubjectType
 from app.schemas.recommend import Constraints
 from app.services.cost import estimate_cost_per_1k_tasks
+from app.services.ranking import (
+    COST_KEY,
+    DimensionScore,
+    DimensionWeight,
+    rank_offerings,
+    rank_sort_key,
+)
+from app.services.ranking import latest_measurement as _latest_measurement
 
 INELIGIBLE_LIFECYCLES = {OfferingLifecycle.DEPRECATED.value, OfferingLifecycle.RETIRED.value}
 
@@ -42,6 +50,8 @@ class Candidate:
     eval_age_days: float | None
     evidence: list[str]
     why: list[str]
+    capability_scores: list[DimensionScore] = dataclasses.field(default_factory=list)
+    coverage: float | None = None
 
 
 @dataclasses.dataclass
@@ -57,20 +67,6 @@ class RecommendResult:
     candidates: list[Candidate]  # already ordered by policy
     excluded: list[Exclusion]
     fallback_chain: list[uuid.UUID]
-
-
-def _latest_measurement(
-    measurements: list[Measurement], attribute_key: str, task_profile: str | None
-) -> Measurement | None:
-    rows = [m for m in measurements if m.attribute_key == attribute_key]
-    rows.sort(key=lambda m: m.observed_at or dt.datetime.min.replace(tzinfo=dt.timezone.utc), reverse=True)
-    exact = [m for m in rows if (m.context or {}).get("task_profile") == task_profile]
-    if exact:
-        return exact[0]
-    generic = [m for m in rows if not (m.context or {}).get("task_profile")]
-    if generic:
-        return generic[0]
-    return rows[0] if rows else None
 
 
 def _check_hard_constraints(
@@ -157,6 +153,8 @@ def build_recommendation(
     policy: str,
     constraints: Constraints,
     exclude_offering_ids: set[uuid.UUID] | None = None,
+    dimensions: list[DimensionWeight] | None = None,
+    mode: str = "relative",
 ) -> RecommendResult:
     exclude_offering_ids = exclude_offering_ids or set()
 
@@ -248,6 +246,35 @@ def build_recommendation(
                 evidence=evidence,
                 why=why,
             )
+        )
+
+    if policy == "capability_weighted":
+        # Ranks EVERY post-constraint candidate over only the dimensions the
+        # caller asked for. Deliberately not gated on cost+quality both being
+        # known (the Pareto/balanced path below is): quality needs platform
+        # evaluations that most of the catalog doesn't have, and this policy
+        # exists to rank by the capability data that does exist.
+        weights = list(dimensions or [])
+        precomputed = {COST_KEY: {c.offering.id: c.cost_per_1k_tasks_usd for c in candidates}}
+        ranked = rank_offerings(
+            db, [c.offering for c in candidates], weights, mode, task_profile=task_profile,
+            precomputed_values=precomputed,
+        )
+        ordered = sorted(candidates, key=lambda c: rank_sort_key(ranked[c.offering.id]))
+        for c in ordered:
+            r = ranked[c.offering.id]
+            c.capability_scores = r.dimension_scores
+            c.coverage = r.coverage
+            if r.composite_score is None:
+                c.why.append("capability score unknown: none of the requested dimensions have evidence on file")
+            else:
+                c.why.append(
+                    f"capability_weighted ({mode}): composite {r.composite_score:.2f} over "
+                    f"{len(weights)} requested dimension(s), {r.coverage:.0%} with evidence"
+                )
+            c.why.append(f"policy: {policy}")
+        return RecommendResult(
+            candidates=ordered, excluded=excluded, fallback_chain=[c.offering.id for c in ordered[1:3]]
         )
 
     known = [c for c in candidates if c.cost_per_1k_tasks_usd is not None and c.quality_score is not None]

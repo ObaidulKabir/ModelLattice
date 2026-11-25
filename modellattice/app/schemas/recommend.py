@@ -14,9 +14,24 @@ class Constraints(BaseModel):
     excluded_providers: list[str] = Field(default_factory=list)
 
 
+class DimensionWeightIn(BaseModel):
+    attribute_key: str = Field(..., description="a rankable UMIM dimension, e.g. 'intelligence_index', or 'cost_per_1k_tasks_usd'")
+    weight: float = Field(default=1.0, gt=0)
+
+
 class RecommendRequest(BaseModel):
     task_profile: str = Field(..., description="e.g. 'structured-extraction@1'")
-    policy: str = Field(default="balanced", description="quality_first | cost_first | balanced")
+    policy: str = Field(
+        default="balanced",
+        description="quality_first | cost_first | balanced | capability_weighted (needs `dimensions`)",
+    )
+    dimensions: list[DimensionWeightIn] = Field(
+        default_factory=list, description="only used by policy=capability_weighted"
+    )
+    mode: str = Field(
+        default="relative",
+        description="relative (normalized within the candidates) | absolute (percentile vs the whole catalog); only used by capability_weighted",
+    )
     constraints: Constraints = Field(default_factory=Constraints)
     current_offering: uuid.UUID | None = None
     tenant_id: str | None = None
@@ -34,6 +49,12 @@ class QualityEstimate(BaseModel):
     maturity: str | None = None
 
 
+class DimensionScoreOut(BaseModel):
+    attribute_key: str
+    raw_value: float | None = None
+    normalized_score: float | None = None  # null = unknown (never 0)
+
+
 class Recommendation(BaseModel):
     rank: int
     offering_id: uuid.UUID
@@ -44,6 +65,8 @@ class Recommendation(BaseModel):
     why: list[str]
     evidence: list[str]
     freshness: Freshness
+    capability_scores: list[DimensionScoreOut] = Field(default_factory=list)
+    coverage: float | None = None  # share of requested dimension weight with evidence (capability_weighted only)
 
 
 class Exclusion(BaseModel):

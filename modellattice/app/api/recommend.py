@@ -6,7 +6,7 @@ client later reports an outcome (v0.2 Section 10, neutrality safeguard).
 """
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -15,12 +15,14 @@ from app.schemas.recommend import (
     Exclusion as ExclusionOut,
 )
 from app.schemas.recommend import (
+    DimensionScoreOut,
     Freshness,
     QualityEstimate,
     Recommendation,
     RecommendRequest,
     RecommendResponse,
 )
+from app.services.ranking import DimensionWeight, RankingError, resolve_dimension, validate_mode
 from app.services.recommender import build_recommendation
 
 router = APIRouter(prefix="/v1", tags=["recommend"])
@@ -29,12 +31,27 @@ router = APIRouter(prefix="/v1", tags=["recommend"])
 @router.post("/recommend", response_model=RecommendResponse)
 def recommend(req: RecommendRequest, db: Session = Depends(get_db)):
     exclude = {req.current_offering} if req.current_offering else set()
+
+    dimensions = None
+    if req.policy == "capability_weighted":
+        if not req.dimensions:
+            raise HTTPException(status_code=422, detail="policy 'capability_weighted' requires at least one entry in `dimensions`")
+        try:
+            validate_mode(req.mode)
+            for d in req.dimensions:
+                resolve_dimension(d.attribute_key)
+        except RankingError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        dimensions = [DimensionWeight(d.attribute_key, d.weight) for d in req.dimensions]
+
     result = build_recommendation(
         db=db,
         task_profile=req.task_profile,
         policy=req.policy,
         constraints=req.constraints,
         exclude_offering_ids=exclude,
+        dimensions=dimensions,
+        mode=req.mode,
     )
 
     recs = []
@@ -55,6 +72,11 @@ def recommend(req: RecommendRequest, db: Session = Depends(get_db)):
                 why=c.why,
                 evidence=c.evidence,
                 freshness=Freshness(pricing_age_hours=c.pricing_age_hours, eval_age_days=c.eval_age_days),
+                capability_scores=[
+                    DimensionScoreOut(attribute_key=s.attribute_key, raw_value=s.raw_value, normalized_score=s.normalized_score)
+                    for s in c.capability_scores
+                ],
+                coverage=c.coverage,
             )
         )
 

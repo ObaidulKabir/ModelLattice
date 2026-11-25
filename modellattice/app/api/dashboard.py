@@ -25,6 +25,8 @@ from app.models.types import OfferingLifecycle
 from app.monitoring.regression import check_regression
 from app.services.alternatives import find_alternatives
 from app.services.cost import get_current_prices
+from app.attribute_registry import RANKABLE_DIMENSIONS
+from app.services.ranking import COST_DIMENSION, COST_KEY, MODES, DimensionWeight, rank_offerings, rank_sort_key
 from app.version import get_build_version
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
@@ -98,6 +100,8 @@ def offerings_list(
     provider: str | None = Query(default=None),
     lifecycle: str | None = Query(default=None),
     q: str | None = Query(default=None),
+    dim: str | None = Query(default=None, description="rank the list by this capability dimension"),
+    mode: str = Query(default="relative"),
     page: int = Query(default=1, ge=1),
     db: Session = Depends(get_db),
 ):
@@ -115,7 +119,20 @@ def offerings_list(
         )
 
     all_offerings = db.execute(stmt).scalars().unique().all()
-    all_offerings.sort(key=lambda o: (o.model.family, o.provider.name))
+
+    # Ranking runs over the FULL filtered set before pagination, so relative
+    # scores don't shift from page to page. A blank/unknown `dim` (or bad
+    # `mode`) degrades to the default order rather than erroring.
+    dim_options = {**RANKABLE_DIMENSIONS, COST_KEY: COST_DIMENSION}
+    if mode not in MODES:
+        mode = "relative"
+    active_dim = dim if dim in dim_options else None
+    ranked = {}
+    if active_dim:
+        ranked = rank_offerings(db, all_offerings, [DimensionWeight(active_dim, 1.0)], mode)
+        all_offerings.sort(key=lambda o: (rank_sort_key(ranked[o.id]), o.model.family, o.provider.name))
+    else:
+        all_offerings.sort(key=lambda o: (o.model.family, o.provider.name))
     total = len(all_offerings)
     start = (page - 1) * PAGE_SIZE
     page_offerings = all_offerings[start : start + PAGE_SIZE]
@@ -133,6 +150,8 @@ def offerings_list(
                 "context_window": (o.limits or {}).get("max_context_tokens"),
                 "tool_calling": (o.api_features or {}).get("tool_calling"),
                 "json_schema": (o.api_features or {}).get("json_schema_output"),
+                "dim_value": ranked[o.id].dimension_scores[0].raw_value if active_dim else None,
+                "dim_score": ranked[o.id].composite_score if active_dim else None,
             }
         )
 
@@ -144,6 +163,7 @@ def offerings_list(
             "rows": rows, "total": total, "page": page, "page_size": PAGE_SIZE,
             "pages": max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE),
             "providers": providers, "filter_provider": provider, "filter_lifecycle": lifecycle, "filter_q": q or "",
+            "dim_options": dim_options, "filter_dim": active_dim, "filter_mode": mode,
         },
     )
 

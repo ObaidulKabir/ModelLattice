@@ -85,6 +85,81 @@ def test_offerings_list_context_window_blank_when_unknown(client, db_session):
     assert "Context window" in r.text  # column header present even with no data
 
 
+def _offering_with_index(db, name, value):
+    from app.models.measurement import AttributeDefinition, Measurement
+    from app.models.types import MeasurementStatus, SubjectType
+
+    provider = db.query(Provider).filter_by(name="OpenRouter").first() or Provider(name="OpenRouter", type="host")
+    db.add(provider)
+    db.flush()
+    model = Model(family=name, developer_id=provider.id, modalities=["text"])
+    db.add(model)
+    db.flush()
+    o = Offering(model_id=model.id, provider_id=provider.id, provider_model_name=f"test/{name}")
+    db.add(o)
+    db.flush()
+    if db.get(AttributeDefinition, "intelligence_index") is None:
+        db.add(AttributeDefinition(key="intelligence_index", dimension="D03", label="iq", value_type="number"))
+    if value is not None:
+        db.add(
+            Measurement(
+                subject_type=SubjectType.OFFERING.value, subject_id=o.id, attribute_key="intelligence_index",
+                value={"raw": value}, status=MeasurementStatus.SUPPORTED.value,
+                observed_at=dt.datetime.now(dt.timezone.utc),
+            )
+        )
+    db.commit()
+    return o
+
+
+def test_offerings_list_dim_param_adds_score_column_and_reorders(client, db_session):
+    _offering_with_index(db_session, "Aardvark", 10)  # alphabetically first, lowest score
+    _offering_with_index(db_session, "Zebra", 90)
+
+    default = client.get("/dashboard/offerings").text
+    assert default.index("Aardvark") < default.index("Zebra")
+    assert "score (" not in default  # no ranking column unless asked for
+
+    ranked = client.get("/dashboard/offerings?dim=intelligence_index&mode=relative").text
+    assert "Intelligence index score (relative)" in ranked
+    assert ranked.index("Zebra") < ranked.index("Aardvark")  # highest score first
+
+
+def test_offerings_list_unknown_dimension_value_shows_dash_not_zero(client, db_session):
+    _offering_with_index(db_session, "Scored", 50)
+    _offering_with_index(db_session, "Unscored", None)
+
+    html = client.get("/dashboard/offerings?dim=intelligence_index").text
+    unscored_row = html[html.index("Unscored"):]
+    unscored_row = unscored_row[: unscored_row.index("</tr>")]
+    assert "—" in unscored_row.split("</td>")[-2] and "0%" not in unscored_row
+
+
+def test_offerings_list_bad_dim_or_mode_degrades_to_default_order(client, db_session):
+    _offering_with_index(db_session, "Aardvark", 10)
+    _offering_with_index(db_session, "Zebra", 90)
+    for qs in ("dim=not_a_dimension", "dim=intelligence_index&mode=sideways"):
+        r = client.get(f"/dashboard/offerings?{qs}")
+        assert r.status_code == 200
+
+
+def test_pagination_links_carry_the_ranking_state(client, db_session):
+    for i in range(55):  # more than one 50-row page
+        _offering_with_index(db_session, f"M{i:02d}", i)
+    html = client.get("/dashboard/offerings?dim=intelligence_index&mode=absolute").text
+    assert "dim=intelligence_index&mode=absolute&page=2" in html
+
+
+def test_negative_sentinel_price_renders_as_dash_not_a_dollar_amount(client, db_session):
+    offering = _seed_one_offering(db_session)
+    db_session.add(PricePoint(offering_id=offering.id, price_type=PriceType.OUTPUT_TOKEN.value, unit="per_1m_tokens", amount=-1_000_000.0, effective_from=dt.datetime.now(dt.timezone.utc)))
+    db_session.commit()
+    listing = client.get("/dashboard/offerings").text
+    assert "-1000000" not in listing and "$-" not in listing
+    detail = client.get(f"/dashboard/offerings/{offering.id}").text
+    assert "-1000000" not in detail and "variable / unknown" in detail
+
+
 def test_static_logo_assets_are_served(client):
     assert client.get("/static/icon.svg").status_code == 200
     assert client.get("/static/logo-mark.svg").status_code == 200
