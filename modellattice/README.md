@@ -26,6 +26,19 @@ app/
                     would corrupt every cost comparison. $0 stays valid
                     (real free tiers). A fuller explicit pricing-state
                     model (known/variable/free/unavailable) is future work.
+                    pricing_freshness() reports verification age, not last-
+                    changed age: PricePoint.last_verified_at is bumped on
+                    every connector run that re-confirms a price (even
+                    unchanged ones, which write no new row by design),
+                    while effective_from only moves when the amount
+                    actually changes. Before this, the dashboard's
+                    freshness figure read ~5% even right after a full
+                    connector refresh, since most prices don't change
+                    between runs. Measured per active (non-deprecated/
+                    retired) offering, against the stalest of its current
+                    rows. Falls back to effective_from for rows written
+                    before this column existed - never credits a
+                    verification that wasn't recorded.
     recommender.py UMNE v0: hard filters -> Pareto ranking -> policy order.
   api/            FastAPI routers: catalog, recommend, feedback, dashboard.
   templates/      Server-rendered Jinja2 templates for the internal

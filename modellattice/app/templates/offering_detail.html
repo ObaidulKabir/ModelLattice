@@ -31,15 +31,16 @@
 
 <h2>Pricing history</h2>
 <table>
-  <tr><th>Type</th><th>Unit</th><th>Amount (USD)</th><th>Effective from</th><th>Effective to</th></tr>
+  <tr><th>Type</th><th>Unit</th><th>Amount (USD)</th><th>Effective from</th><th>Effective to</th><th>Last verified</th></tr>
   {% for p in prices %}
   <tr>
     <td>{{ p.price_type }}</td><td>{{ p.unit }}</td><td>{% if p.amount >= 0 %}${{ "%.4f"|format(p.amount) }}{% else %}<span class="muted" title="Source reports a variable/unspecified price (negative sentinel)">variable / unknown</span>{% endif %}</td>
     <td>{{ p.effective_from.strftime("%Y-%m-%d %H:%M") }}</td>
     <td>{% if p.effective_to %}{{ p.effective_to.strftime("%Y-%m-%d %H:%M") }}{% else %}<span class="pill ok">current</span>{% endif %}</td>
+    <td>{{ (p.last_verified_at or p.effective_from).strftime("%Y-%m-%d %H:%M") }}</td>
   </tr>
   {% endfor %}
-  {% if not prices %}<tr><td colspan="5" class="muted">No pricing on file.</td></tr>{% endif %}
+  {% if not prices %}<tr><td colspan="6" class="muted">No pricing on file.</td></tr>{% endif %}
 </table>
 
 <h2>Measurements (UMIM)</h2>

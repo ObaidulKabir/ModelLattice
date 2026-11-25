@@ -9,11 +9,12 @@ workload estimates once real telemetry (UMFR) is flowing.
 import datetime as dt
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.models.catalog import Offering
 from app.models.pricing import PricePoint
-from app.models.types import PriceType
+from app.models.types import OfferingLifecycle, PriceType
 
 DEFAULT_AVG_INPUT_TOKENS = 500
 DEFAULT_AVG_OUTPUT_TOKENS = 300
@@ -71,10 +72,56 @@ def estimate_cost_per_1k_tasks(
     ) * output_pp.amount
     cost_per_1k_tasks = cost_per_task * 1000
 
-    newest_effective = max(input_pp.effective_from, output_pp.effective_from)
+    # Age since the price was last VERIFIED (not last changed) - and the
+    # estimate is only as fresh as the staler of the two prices it uses.
+    def _verified(pp: PricePoint) -> dt.datetime:
+        at = pp.last_verified_at or pp.effective_from
+        return at.replace(tzinfo=dt.timezone.utc) if at.tzinfo is None else at
+
+    stalest_verification = min(_verified(input_pp), _verified(output_pp))
     now = dt.datetime.now(dt.timezone.utc)
-    if newest_effective.tzinfo is None:
-        newest_effective = newest_effective.replace(tzinfo=dt.timezone.utc)
-    age_hours = (now - newest_effective).total_seconds() / 3600
+    age_hours = (now - stalest_verification).total_seconds() / 3600
 
     return round(cost_per_1k_tasks, 4), round(age_hours, 1)
+
+
+def pricing_freshness(db: Session, now: dt.datetime | None = None) -> dict:
+    """How recently the catalog's current prices were VERIFIED by a source.
+
+    Measured per active offering (deprecated/retired offerings are never
+    re-listed by connectors, so counting them would hold the figure down
+    forever), against the STALEST of that offering's current price rows -
+    a price is only as fresh as its least recently confirmed component.
+    Uses last_verified_at, falling back to effective_from for rows that
+    predate the column, so it never claims a verification that wasn't
+    recorded. An unchanged price still counts as fresh when re-checked;
+    measuring last *change* (effective_from) made almost every price look
+    stale regardless of how often connectors ran.
+    """
+    now = now or dt.datetime.now(dt.timezone.utc)
+    verified = func.coalesce(PricePoint.last_verified_at, PricePoint.effective_from)
+    rows = db.execute(
+        select(func.min(verified))
+        .join(Offering, Offering.id == PricePoint.offering_id)
+        .where(
+            PricePoint.effective_to.is_(None),
+            Offering.lifecycle.not_in([OfferingLifecycle.DEPRECATED.value, OfferingLifecycle.RETIRED.value]),
+        )
+        .group_by(PricePoint.offering_id)
+    ).scalars().all()
+
+    def _aware(t: dt.datetime) -> dt.datetime:
+        return t.replace(tzinfo=dt.timezone.utc) if t.tzinfo is None else t
+
+    ages_h = [(now - _aware(t)).total_seconds() / 3600 for t in rows if t is not None]
+    total = len(ages_h)
+    fresh = sum(1 for a in ages_h if a <= 24)
+    aging = sum(1 for a in ages_h if 24 < a <= 24 * 7)
+    return {
+        "priced_active": total,
+        "fresh_24h": fresh,
+        "aging_7d": aging,
+        "stale": total - fresh - aging,
+        "fresh_pct": round(100 * fresh / total, 1) if total else 0,
+        "most_recent_verification": _aware(max(t for t in rows if t is not None)) if total else None,
+    }

@@ -20,9 +20,13 @@
 </div>
 
 <h2>Pricing freshness</h2>
-<p>{{ stats.fresh_24h }} of {{ stats.priced_offerings }} priced offerings updated in the last 24 hours
-  (<strong>{{ stats.freshness_pct }}%</strong>). Refresh with <span class="mono">scripts.run_connectors</span>
-  or the scheduler daemon.</p>
+{% set f = stats.freshness %}
+<p>{{ f.fresh_24h }} of {{ f.priced_active }} active priced offerings were verified by a source in the last 24 hours
+  (<strong>{{ f.fresh_pct }}%</strong>);
+  {{ f.aging_7d }} between 1 and 7 days ago; {{ f.stale }} older than 7 days.
+  {% if f.most_recent_verification %}Most recent verification: <span class="mono">{{ f.most_recent_verification.strftime("%Y-%m-%d %H:%M UTC") }}</span>.{% endif %}
+  <span class="muted">"Verified" means a connector re-checked the price, whether or not it changed.
+  Refresh with <span class="mono">scripts.run_connectors</span> or the scheduler daemon.</span></p>
 
 <h2>Offerings by host</h2>
 <table>

@@ -24,7 +24,7 @@ from app.models.relationship import Relationship
 from app.models.types import OfferingLifecycle
 from app.monitoring.regression import check_regression
 from app.services.alternatives import find_alternatives
-from app.services.cost import get_current_prices
+from app.services.cost import get_current_prices, pricing_freshness
 from app.attribute_registry import RANKABLE_DIMENSIONS
 from app.services.ranking import COST_DIMENSION, COST_KEY, MODES, DimensionWeight, rank_offerings, rank_sort_key
 from app.version import get_build_version
@@ -51,15 +51,7 @@ def overview(request: Request, db: Session = Depends(get_db)):
         select(func.count()).select_from(Offering).where(Offering.lifecycle == OfferingLifecycle.DEPRECATED.value)
     ).scalar_one()
 
-    now = dt.datetime.now(dt.timezone.utc)
-    fresh_24h = db.execute(
-        select(func.count(func.distinct(PricePoint.offering_id))).where(
-            PricePoint.effective_to.is_(None), PricePoint.effective_from >= now - dt.timedelta(hours=24)
-        )
-    ).scalar_one()
-    priced_offerings = db.execute(
-        select(func.count(func.distinct(PricePoint.offering_id))).where(PricePoint.effective_to.is_(None))
-    ).scalar_one()
+    freshness = pricing_freshness(db)
 
     stats = {
         "providers": _count(db, Provider),
@@ -72,9 +64,7 @@ def overview(request: Request, db: Session = Depends(get_db)):
         "relationships": _count(db, Relationship),
         "eval_runs": _count(db, EvalRun),
         "eval_results": _count(db, EvalResult),
-        "priced_offerings": priced_offerings,
-        "fresh_24h": fresh_24h,
-        "freshness_pct": round(100 * fresh_24h / priced_offerings, 1) if priced_offerings else 0,
+        "freshness": freshness,
     }
 
     recent_evidence = db.execute(

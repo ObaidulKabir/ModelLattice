@@ -26,4 +26,11 @@ class PricePoint(Base):
     currency: Mapped[str] = mapped_column(String(8), default="USD")
     effective_from: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     effective_to: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    # effective_from is when the price took THIS value; last_verified_at is
+    # the most recent time a source re-confirmed it. An unchanged price
+    # writes no new row (history is append-only on change), so without this
+    # a price re-checked minutes ago would look as old as its last change.
+    # NULL on rows from before this column existed -> fall back to
+    # effective_from (never claim a verification that wasn't recorded).
+    last_verified_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     source_evidence_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("evidence_source.id"))

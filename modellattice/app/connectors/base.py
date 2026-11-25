@@ -112,13 +112,14 @@ def upsert_price(db: Session, offering_id: uuid.UUID, price_type: str, amount_pe
         select(PricePoint).where(PricePoint.offering_id == offering_id, PricePoint.price_type == price_type, PricePoint.effective_to.is_(None))
     ).scalar_one_or_none()
     if current and current.unit == "per_1m_tokens" and abs(current.amount - amount_per_1m) < 1e-9:
+        current.last_verified_at = now  # re-confirmed, so it is fresh even though nothing changed
         return False  # unchanged; don't spam history
     if current:
         current.effective_to = now
     db.add(
         PricePoint(
             offering_id=offering_id, price_type=price_type, unit="per_1m_tokens",
-            amount=amount_per_1m, effective_from=now, source_evidence_id=evidence_id,
+            amount=amount_per_1m, effective_from=now, last_verified_at=now, source_evidence_id=evidence_id,
         )
     )
     return True
