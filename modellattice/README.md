@@ -314,7 +314,7 @@ scripts/
   scheduler_daemon.py  Long-running process wrapping app/scheduler.py -
                     run it as its own service, separate from the web app.
   run_eval.py        CLI to run a REAL evaluation against a live offering.
-tests/            pytest suite against an in-memory SQLite DB (199 tests).
+tests/            pytest suite against an in-memory SQLite DB (201 tests).
 Dockerfile, .dockerignore, docker-compose.yml  Containerizes the app
   itself (postgres was already containerized) - an `app` service
   (migrations then uvicorn) and a profile-gated `scheduler` service, so
@@ -473,6 +473,55 @@ than erroring. Worth knowing before trusting a low score from a
 reasoning-capable model: raising `max_tokens` or disabling that model's
 reasoning mode (where the provider supports it) is the fix, not yet
 wired into `model_client.py`.
+
+### Closing the real coverage gap: a budget-gated batch eval runner
+
+The actual bottleneck in this platform's recommendation accuracy was
+never the ranking math - it's that `scripts/run_eval.py` evaluates
+exactly one offering at a time, by hand, so closing real coverage over
+546 offerings x 5 task profiles (2,730 combinations, of which only ~8
+ever carried genuine live-evaluation evidence) would mean hundreds of
+manual invocations. `scripts/run_eval_batch.py` is a second, still-manual
+command - it changes nothing about the standing rule that evals are a
+deliberate action and never an automatic background one
+(`app/config.py`) - that spends one approved budget across many
+offerings in a single run:
+
+```bash
+./.venv/Scripts/python.exe -m scripts.run_eval_batch \
+  --task-profile structured-extraction --max-total-budget-usd 0.20 --limit 5 [--dry-run]
+```
+
+v1 scope, deliberately: the three deterministic task profiles only
+(`structured-extraction`, `code-edit`, `tool-use-agent` - no judge model
+to pick for hundreds of runs), and OpenRouter-evaluable offerings only
+(matching what `app/evals/model_client.py` can call live today; `rag-qa`/
+`summarization` and non-OpenRouter providers stay single-invocation via
+`scripts/run_eval.py`). Selection (`app/evals/batch.py::select_targets`)
+picks offerings with **zero** `task_quality_score` evidence for the exact
+requested profile@version - breadth over depth, since one new data point
+moves the near-zero coverage number further than a second data point on
+an already-evaluated offering - ordered **cheapest known price first**
+(via `app/services/cost.py`'s existing price-validity rules; unknown/
+variable prices sort last, never guessed at). `run_batch()` reuses
+`app/evals/runner.py::run_evaluation` exactly as-is per offering - no
+duplicated eval logic, no bypassed budget check - and stops the whole
+batch cleanly (reporting what already completed) the moment either
+`--max-total-budget-usd` or the existing weekly cap would be exceeded.
+
+Verified live against the real local catalog: `--dry-run` selected 10
+real zero-coverage free-tier offerings at $0.00 projected cost; a real
+run (`--max-total-budget-usd 0.20 --limit 5`) evaluated all 5 selected
+offerings for real (`baidu/ernie-5.5-flash-preview:free`,
+`liquid/lfm-3-1.7b:free`, `recursive/flint-v1.0:free`,
+`particle-ai/particle-1:free`, `nvidia/nemotron-3.5-super-vl:free`),
+genuinely moving `structured-extraction@1` coverage from **4 to 9
+offerings** for **$0.00** spent (all free-tier); re-running the identical
+command immediately after correctly selected the next 5 candidates, with
+the just-evaluated ones excluded. Still just a few dozen of the ~2,455
+OpenRouter combinations - a human deliberately choosing a larger
+`--max-total-budget-usd` is how the rest gets closed, not anything this
+change runs automatically.
 
 ### Keeping the catalog fresh automatically
 
