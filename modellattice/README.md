@@ -314,7 +314,7 @@ scripts/
   scheduler_daemon.py  Long-running process wrapping app/scheduler.py -
                     run it as its own service, separate from the web app.
   run_eval.py        CLI to run a REAL evaluation against a live offering.
-tests/            pytest suite against an in-memory SQLite DB (185 tests).
+tests/            pytest suite against an in-memory SQLite DB (199 tests).
 Dockerfile, .dockerignore, docker-compose.yml  Containerizes the app
   itself (postgres was already containerized) - an `app` service
   (migrations then uvicorn) and a profile-gated `scheduler` service, so
@@ -585,6 +585,27 @@ offering, and confirmed `POST /v1/recommend`'s
 either connector is idempotent: an unchanged statement writes no new
 Measurement history row.
 
+### D12 deployment evidence (region availability)
+
+```bash
+./.venv/Scripts/python.exe -m scripts.run_connectors google_deployment
+```
+
+Fetches Google Cloud's Vertex AI region-availability docs and writes
+real `Deployment` rows (`region`, a coarse `data_residency` bucket,
+`source_evidence_id`) for already-known Google-direct offerings - see
+`app/connectors/google_deployment.py`'s docstring for the exact table
+structure and the honest, deliberately narrow region-to-residency
+mapping. Run against the real local catalog: 19 of 20 Google-direct
+offerings matched, 108 `Deployment` rows written. This is the first
+real data `app/services/recommender.py`'s `constraints.data_residency`
+hard constraint has ever had to filter by - confirmed live:
+`POST /v1/recommend` with `"data_residency": ["EU"]` now actually
+narrows the candidate set instead of rejecting every offering for lack
+of any deployment information on file. Re-running is idempotent (no
+duplicate rows; `source_evidence_id` moves to the latest confirming
+run).
+
 Run the MCP server (stdio) instead of/alongside the REST API:
 
 ```bash
@@ -650,23 +671,47 @@ evaluations (deliberate - see "Keeping the catalog fresh automatically"
 above), and no auth beyond a single shared API key. These are the
 weeks 9-12 and post-MVP items in Section 12 of the concept document.
 
-**UMIM D12 (Deployment & Accessibility) has no real rows for any
-offering.** It isn't just unpopulated - `app/attribute_registry.py` has
-no D12 attribute keys defined at all yet, unlike every other dimension.
-A quick re-check this session found candidate real, plain-HTTP-fetchable
-sources that didn't exist the last time this was investigated - Google
-Cloud's Vertex AI region-availability docs, Microsoft's Azure OpenAI
-model/region docs, and Anthropic's supported-regions page all returned
-200 with the relevant region text present directly in server-rendered
-HTML (not JS-loaded, unlike Artificial Analysis's speed leaderboard
-below). But none of them is a drop-in extension of an existing
-connector the way D11 was: they describe cloud-region or country-level
-API accessibility, not a per-model fact, so building this means first
-deciding what a D12 attribute even means for this catalog (which
-offerings it attaches to, host-direct vs. resold-via-Bedrock/Vertex,
-one row per region or a summary flag) before any parsing work. Flagged
-here as a real, scoped follow-up rather than guessed at or bundled into
-this change.
+**UMIM D12 (Deployment & Accessibility) now has real rows for Google's
+direct offerings, via the `Deployment` table that already existed for
+this.** `app/models/catalog.py`'s `Deployment` table
+(`offering_id`/`region`/`data_residency`/`quantization`/`endpoint_class`)
+predates this work and `app/services/recommender.py`'s
+`constraints.data_residency` hard constraint already read it - it just
+always rejected every candidate ("no deployment residency information
+on file") because the table had zero real rows anywhere in the catalog.
+`app/connectors/google_deployment.py` fixes that for Google: it fetches
+Google Cloud's Vertex AI region-availability docs
+(`cloud.google.com/vertex-ai/generative-ai/docs/learn/locations`), a
+real, static, per-model, per-region HTML table (confirmed live: a
+`<h3>region group</h3><table>` per geography, one `<tr>` per model, one
+`<td class="compare-yes">` per supported region - genuine variance
+confirmed, not a parsing artifact: brand-new preview models show zero
+supported regions, established ones show several). It added a
+`source_evidence_id` column to `Deployment` first (it had no evidence
+link at all, unlike `PricePoint`) via a small migration, then matched by
+raw slug against already-known Google-direct offerings exactly like
+`google_pricing.py` - never inventing a Model or Offering. `region` is
+the real GCP code; `data_residency` is a small, deliberately narrow,
+documented prefix map (`us-* -> "US"`, `europe-*`/`"eu" -> "EU"`,
+`asia-*`/`australia-* -> "APAC"`) - anything else (Middle East, Canada,
+Brazil, "global") still gets its real region recorded but no residency
+bucket, rather than guessing one. Verified against the real local
+catalog: 19 of 20 Google-direct offerings matched, 108 real `Deployment`
+rows written, and `POST /v1/recommend`'s `data_residency` constraint now
+genuinely filters by them instead of rejecting everything.
+
+**Still open for D12**: OpenAI and Anthropic aren't covered.
+Anthropic's own "supported regions" page looked promising on a first
+pass (200, text present) but turned out on closer inspection to be a
+JS-rendered app shell - the raw HTML is just an i18n string dump with no
+real content, not usable as-is (a correction to what an earlier pass of
+this README claimed). Microsoft's Azure AI Foundry models page is real
+static HTML but is a category index linking to per-model-family
+sub-pages (e.g. `models-sold-directly-by-azure#gpt-4o-and-gpt-4-turbo`)
+- a real candidate, not yet verified in depth. Multi-cloud/marketplace
+resale (is this model also available via AWS Bedrock, Azure, GCP Vertex)
+is a materially different and larger question than Google's own region
+footprint, and is not attempted here.
 
 **UMIM D11 (Security & Governance, training-data policy) now covers
 every direct offering from all three hosts with their own pricing

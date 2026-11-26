@@ -91,5 +91,9 @@ class Deployment(Base):
     quantization: Mapped[str | None] = mapped_column(String(32))
     endpoint_class: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Same provenance discipline as PricePoint.source_evidence_id - a
+    # Deployment row is a real evidenced fact (UMIM D12), never asserted
+    # without a trace to where it came from (v0.1 Section 3).
+    source_evidence_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("evidence_source.id"))
 
     offering: Mapped[Offering] = relationship(back_populates="deployments")

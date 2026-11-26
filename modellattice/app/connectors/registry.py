@@ -21,6 +21,7 @@ from app.connectors import (
     anthropic_governance,
     anthropic_pricing,
     epoch_ai,
+    google_deployment,
     google_pricing,
     openai_governance,
     openai_pricing,
@@ -81,6 +82,14 @@ CONNECTORS = {
         "evidence_type": EvidenceType.OFFICIAL_DOC.value,
         "method": "anthropic_governance connector: first-party privacy support article (D11 training-data policy)",
         "ingest": anthropic_governance.ingest_anthropic_governance,
+    },
+    "google_deployment": {
+        "fetch": google_deployment.fetch_raw,
+        "url": google_deployment.LOCATIONS_URL,
+        "host_provider_name": "Google",
+        "evidence_type": EvidenceType.OFFICIAL_DOC.value,
+        "method": "google_deployment connector: first-party region-availability docs (D12 deployment/accessibility)",
+        "ingest": google_deployment.ingest_google_deployment,
     },
     "epoch_ai": {
         "fetch": epoch_ai.fetch_raw,
