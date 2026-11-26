@@ -314,7 +314,7 @@ scripts/
   scheduler_daemon.py  Long-running process wrapping app/scheduler.py -
                     run it as its own service, separate from the web app.
   run_eval.py        CLI to run a REAL evaluation against a live offering.
-tests/            pytest suite against an in-memory SQLite DB (173 tests).
+tests/            pytest suite against an in-memory SQLite DB (185 tests).
 Dockerfile, .dockerignore, docker-compose.yml  Containerizes the app
   itself (postgres was already containerized) - an `app` service
   (migrations then uvicorn) and a profile-gated `scheduler` service, so
@@ -541,6 +541,50 @@ are and how much sample size backs them. `GET /v1/alternatives/{id}`
 the edge correctly - the direction and wording differ (forward vs
 reverse), never assumed symmetric.
 
+### D11 governance evidence (training-data policy)
+
+```bash
+./.venv/Scripts/python.exe -m scripts.run_connectors openai_governance anthropic_governance
+```
+
+Two new connectors, each a plain-HTTP fetch of one official page, never
+a new Model or Offering - they only attach evidence to already-known
+provider-direct Offerings (created by `openai_pricing.py`/
+`anthropic_pricing.py`), exactly like `google_pricing.py`'s existing D11
+column:
+
+- `app/connectors/openai_governance.py` fetches
+  `https://openai.com/enterprise-privacy/` and looks for the literal
+  sentence "By default, we do not use your business data for training
+  our models." - a single, uninterrupted string in the raw HTML.
+- `app/connectors/anthropic_governance.py` fetches
+  `https://privacy.claude.com/en/articles/7996868-is-my-data-used-for-model-training`
+  and looks for "By default, we will not use your inputs or outputs
+  from our commercial products (e.g. Claude for Work, Anthropic API,
+  Claude Gov, etc.) to train our models." - confirmed live that this
+  sentence is split in the raw HTML by an `<i>(e.g. ...)</i>` tag around
+  the parenthetical, so the connector strips HTML tags to whitespace
+  first and searches the cleaned text, rather than guessing at a regex
+  gap (the same lesson `anthropic_pricing.py` already learned for its
+  pricing table).
+
+Both statements are blanket, company-wide claims, not per-model - unlike
+Google's page, OpenAI and Anthropic don't publish a per-model training
+policy - so a found statement is applied identically to every
+provider-direct Offering already in the catalog. If the expected
+sentence isn't found (a wording change, a page restructure), nothing is
+written; absence is never read as the opposite claim. Verified against
+the real live pages (not just the test fixtures) in this session: both
+currently resolve to `no_training_on_inputs = True`. Run against the
+real local catalog: 16 OpenAI-direct and 15 Anthropic-direct offerings
+got the `no_training_on_inputs_attr` Measurement (type `official_doc`)
+and the matching `offering.api_features["no_training_on_inputs"]` flag
+- confirmed on `GET /dashboard/offerings/<id>` for a real OpenAI
+offering, and confirmed `POST /v1/recommend`'s
+`constraints.no_training_on_inputs` hard constraint sees it. Re-running
+either connector is idempotent: an unchanged statement writes no new
+Measurement history row.
+
 Run the MCP server (stdio) instead of/alongside the REST API:
 
 ```bash
@@ -603,13 +647,39 @@ Per the MVP scope in the concept doc (Section 5.2): no survey engine, no
 blind pairwise comparisons, no multi-hop path traversal, no hysteresis/
 switching-cost modelling, no cross-tenant aggregation, no scheduled
 evaluations (deliberate - see "Keeping the catalog fresh automatically"
-above), no auth beyond a single shared API key, and still no per-region
-Deployment rows for any real offering. Training-data-policy evidence
-(UMIM D11) now exists for Google's 19 matched offerings (see
-google_pricing.py above) but not for OpenAI or Anthropic - neither of
-their pricing pages publishes it; their data-usage policy more likely
-lives on a separate privacy/enterprise page, not yet checked. These are
-the weeks 9-12 and post-MVP items in Section 12 of the concept document.
+above), and no auth beyond a single shared API key. These are the
+weeks 9-12 and post-MVP items in Section 12 of the concept document.
+
+**UMIM D12 (Deployment & Accessibility) has no real rows for any
+offering.** It isn't just unpopulated - `app/attribute_registry.py` has
+no D12 attribute keys defined at all yet, unlike every other dimension.
+A quick re-check this session found candidate real, plain-HTTP-fetchable
+sources that didn't exist the last time this was investigated - Google
+Cloud's Vertex AI region-availability docs, Microsoft's Azure OpenAI
+model/region docs, and Anthropic's supported-regions page all returned
+200 with the relevant region text present directly in server-rendered
+HTML (not JS-loaded, unlike Artificial Analysis's speed leaderboard
+below). But none of them is a drop-in extension of an existing
+connector the way D11 was: they describe cloud-region or country-level
+API accessibility, not a per-model fact, so building this means first
+deciding what a D12 attribute even means for this catalog (which
+offerings it attaches to, host-direct vs. resold-via-Bedrock/Vertex,
+one row per region or a summary flag) before any parsing work. Flagged
+here as a real, scoped follow-up rather than guessed at or bundled into
+this change.
+
+**UMIM D11 (Security & Governance, training-data policy) now covers
+every direct offering from all three hosts with their own pricing
+connector.** `app/connectors/google_pricing.py` already carried it for
+Google's 20 matched offerings (from its pricing table's "Used to
+improve our products" column). This session added
+`app/connectors/openai_governance.py` (OpenAI's Enterprise Privacy
+page, 16 offerings) and `app/connectors/anthropic_governance.py`
+(Anthropic's "Is my data used for model training?" support article, 15
+offerings) - see "D11 governance evidence" below. Still missing for any
+offering that only exists as an OpenRouter resale (no matching
+provider-direct connector), and for any provider without a pricing
+connector at all.
 
 **Speed as a capability attribute**: confirmed there is no such field
 anywhere in OpenRouter's catalog JSON (checked both top-level keys and
