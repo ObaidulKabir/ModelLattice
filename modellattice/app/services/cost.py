@@ -14,10 +14,18 @@ from sqlalchemy.orm import Session
 
 from app.models.catalog import Offering
 from app.models.pricing import PricePoint
-from app.models.types import OfferingLifecycle, PriceType
+from app.models.types import OfferingLifecycle, PriceState, PriceType
 
 DEFAULT_AVG_INPUT_TOKENS = 500
 DEFAULT_AVG_OUTPUT_TOKENS = 300
+
+
+def _is_known_price(pp: PricePoint) -> bool:
+    """state is the authoritative signal; the amount check is defense in
+    depth for any row not written through upsert_price (seed data, a
+    migration backfill, a future bypass) - a price is never trusted as a
+    number unless BOTH say so."""
+    return pp.state == PriceState.KNOWN.value and pp.amount is not None and pp.amount >= 0
 
 
 def get_current_prices(db: Session, offering_id: uuid.UUID) -> dict[str, PricePoint]:
@@ -59,12 +67,10 @@ def estimate_cost_per_1k_tasks(
     if input_pp.unit != "per_1m_tokens" or output_pp.unit != "per_1m_tokens":
         return None, None
 
-    # A negative amount is not a real price: OpenRouter's variable-price
-    # routers (e.g. openrouter/auto) encode "price depends on the routed
-    # model" as -1 per token, which arrives here as -$1,000,000 per 1M.
-    # Treat as unknown rather than letting it corrupt every cost comparison.
-    # Strictly < 0: $0 is a legitimate price (free tiers) and must stay valid.
-    if input_pp.amount < 0 or output_pp.amount < 0:
+    # A non-"known" price (e.g. OpenRouter's variable-price routers) has no
+    # real amount to estimate from - treat as unknown rather than letting a
+    # sentinel corrupt every cost comparison. $0 stays valid (free tiers).
+    if not _is_known_price(input_pp) or not _is_known_price(output_pp):
         return None, None
 
     cost_per_task = (avg_input_tokens / 1_000_000) * input_pp.amount + (

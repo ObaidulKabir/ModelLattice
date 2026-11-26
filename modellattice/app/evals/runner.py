@@ -38,7 +38,7 @@ from app.models.catalog import Offering
 from app.models.evaluation import EvalResult, EvalRun
 from app.models.measurement import EvidenceSource, Measurement
 from app.models.types import EvidenceType, MeasurementStatus, SubjectType
-from app.services.cost import get_current_prices
+from app.services.cost import _is_known_price, get_current_prices
 
 MIN_SAMPLES_FOR_S3 = 3
 
@@ -90,6 +90,11 @@ def _estimate_call_cost(offering: Offering, db: Session, prompt_tokens: int | No
     inp = prices.get("input_token")
     out = prices.get("output_token")
     if inp is None or out is None or prompt_tokens is None or completion_tokens is None:
+        return None
+    # A variable-priced offering (e.g. an auto-router) has no real amount to
+    # cost a call against - this feeds the real-money budget cap below, so
+    # never silently treat a missing/sentinel price as $0 or crash on it.
+    if not _is_known_price(inp) or not _is_known_price(out):
         return None
     return (prompt_tokens / 1_000_000) * inp.amount + (completion_tokens / 1_000_000) * out.amount
 

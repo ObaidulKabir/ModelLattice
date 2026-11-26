@@ -12,7 +12,7 @@ from sqlalchemy import DateTime, Float, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
-from app.models.types import uuid_pk
+from app.models.types import PriceState, uuid_pk
 
 
 class PricePoint(Base):
@@ -22,7 +22,10 @@ class PricePoint(Base):
     offering_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("offering.id"), nullable=False)
     price_type: Mapped[str] = mapped_column(String(32), nullable=False)  # PriceType
     unit: Mapped[str] = mapped_column(String(32), nullable=False)  # e.g. "per_1m_tokens", "per_image"
-    amount: Mapped[float] = mapped_column(Float, nullable=False)
+    # Nullable: a non-KNOWN state (see PriceState) has no real amount to
+    # report - never a sentinel number standing in for "we don't know".
+    amount: Mapped[float | None] = mapped_column(Float)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default=PriceState.KNOWN.value, server_default=PriceState.KNOWN.value)
     currency: Mapped[str] = mapped_column(String(8), default="USD")
     effective_from: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     effective_to: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))

@@ -193,6 +193,22 @@ def test_cost_dimension_ignores_negative_sentinel_prices(db_session):
     assert values[router.id] is None and values[cheap.id] is not None
 
 
+def test_cost_dimension_ignores_variable_priced_offerings(db_session):
+    """The real shape a variable price takes via upsert_price: state is
+    explicitly "variable" and amount is null - no sign to infer from."""
+    from app.models.pricing import PricePoint
+    from app.models.types import PriceState, PriceType
+
+    cheap, router = _offering(db_session, "cheap"), _offering(db_session, "router")
+    for pt in (PriceType.INPUT_TOKEN.value, PriceType.OUTPUT_TOKEN.value):
+        db_session.add(PricePoint(offering_id=cheap.id, price_type=pt, unit="per_1m_tokens", amount=1.0, state=PriceState.KNOWN.value, effective_from=T0))
+        db_session.add(PricePoint(offering_id=router.id, price_type=pt, unit="per_1m_tokens", amount=None, state=PriceState.VARIABLE.value, effective_from=T0))
+    db_session.commit()
+
+    values = collect_dimension_values(db_session, [cheap, router], ranking.COST_KEY)
+    assert values[router.id] is None and values[cheap.id] is not None
+
+
 def test_bad_requests_raise_ranking_error(db_session):
     o = _offering(db_session, "x")
     db_session.commit()

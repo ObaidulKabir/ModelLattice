@@ -48,8 +48,8 @@
       {% elif r.lifecycle == "deprecated" %}<span class="pill warn">deprecated</span>
       {% else %}<span class="pill off">{{ r.lifecycle }}</span>{% endif %}
     </td>
-    <td>{{ "$%.3f"|format(r.input_price) if r.input_price is not none and r.input_price >= 0 else "—" }}</td>
-    <td>{{ "$%.3f"|format(r.output_price) if r.output_price is not none and r.output_price >= 0 else "—" }}</td>
+    <td>{% if r.input_state != "known" or r.input_price is none %}{% if r.input_state == "variable" %}<span class="muted" title="Depends on the model this offering routes to">variable</span>{% else %}—{% endif %}{% elif r.input_price < 0 %}—{% else %}${{ "%.3f"|format(r.input_price) }}{% endif %}</td>
+    <td>{% if r.output_state != "known" or r.output_price is none %}{% if r.output_state == "variable" %}<span class="muted" title="Depends on the model this offering routes to">variable</span>{% else %}—{% endif %}{% elif r.output_price < 0 %}—{% else %}${{ "%.3f"|format(r.output_price) }}{% endif %}</td>
     <td class="mono">{{ "{:,}".format(r.context_window) if r.context_window is not none else "—" }}</td>
     <td>{% if r.tool_calling == true %}✓{% elif r.tool_calling == false %}✗{% else %}<span class="muted">?</span>{% endif %}</td>
     <td>{% if r.json_schema == true %}✓{% elif r.json_schema == false %}✗{% else %}<span class="muted">?</span>{% endif %}</td>

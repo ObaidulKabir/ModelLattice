@@ -7,11 +7,11 @@ import datetime as dt
 
 from sqlalchemy import select
 
-from app.connectors.base import RawOffering, ingest
+from app.connectors.base import RawOffering, ingest, upsert_price
 from app.models.catalog import Offering
 from app.models.measurement import EvidenceSource, Measurement
 from app.models.pricing import PricePoint
-from app.models.types import EvidenceType, OfferingLifecycle, ProviderType
+from app.models.types import EvidenceType, OfferingLifecycle, PriceState, PriceType, ProviderType
 
 
 def _evidence(db):
@@ -173,3 +173,70 @@ def test_attribute_definitions_auto_registered_on_ingest(db_session):
 
     # Calling it again is a no-op (idempotent).
     assert ensure_attribute_definitions(db_session) == 0
+
+
+# --- price states (OpenRouter's -1-per-token "variable" convention) ----------
+
+
+def test_negative_amount_is_recorded_as_variable_with_no_stored_amount(db_session):
+    """OpenRouter's auto-router convention: -1 per token means "depends on
+    the routed model", never a real negative price. Must never be stored as
+    a number that downstream code could mistake for real evidence."""
+    evidence = _evidence(db_session)
+    items = [_offering("Acme", "Auto", "acme/auto", -0.000001, -0.000001)]
+    ingest(db_session, "TestHost", ProviderType.HOST.value, items, evidence)
+
+    offering = db_session.execute(select(Offering)).scalar_one()
+    prices = db_session.execute(select(PricePoint).where(PricePoint.offering_id == offering.id)).scalars().all()
+    assert len(prices) == 2
+    for p in prices:
+        assert p.state == PriceState.VARIABLE.value
+        assert p.amount is None  # never the literal -$1,000,000 sentinel
+
+
+def test_a_price_that_turns_variable_closes_the_old_known_row(db_session):
+    evidence = _evidence(db_session)
+    now = dt.datetime.now(dt.timezone.utc)
+    ingest(db_session, "TestHost", ProviderType.HOST.value, [_offering("Acme", "Was Fixed", "acme/was-fixed", 0.000001, 0.000001)], evidence)
+    offering = db_session.execute(select(Offering)).scalar_one()
+
+    changed = upsert_price(db_session, offering.id, PriceType.INPUT_TOKEN.value, -1_000_000.0, evidence.id, now)
+    db_session.commit()
+    assert changed is True
+
+    rows = db_session.execute(
+        select(PricePoint).where(PricePoint.offering_id == offering.id, PricePoint.price_type == PriceType.INPUT_TOKEN.value)
+    ).scalars().all()
+    assert len(rows) == 2
+    old = next(r for r in rows if r.state == PriceState.KNOWN.value)
+    new = next(r for r in rows if r.state == PriceState.VARIABLE.value)
+    assert old.effective_to is not None and old.amount == 1.0
+    assert new.effective_to is None and new.amount is None
+
+
+def test_repeated_variable_price_does_not_spam_history_but_still_bumps_verification(db_session):
+    evidence = _evidence(db_session)
+    t0 = dt.datetime.now(dt.timezone.utc)
+    ingest(db_session, "TestHost", ProviderType.HOST.value, [_offering("Acme", "Router", "acme/router", -0.000001, -0.000001)], evidence)
+    offering = db_session.execute(select(Offering)).scalar_one()
+
+    later = t0 + dt.timedelta(hours=6)
+    changed = upsert_price(db_session, offering.id, PriceType.INPUT_TOKEN.value, -1_000_000.0, evidence.id, later)
+    db_session.commit()
+    assert changed is False  # still variable - no new row
+
+    rows = db_session.execute(
+        select(PricePoint).where(PricePoint.offering_id == offering.id, PricePoint.price_type == PriceType.INPUT_TOKEN.value)
+    ).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].last_verified_at.replace(tzinfo=dt.timezone.utc) == later  # re-confirmed as still variable
+
+
+def test_known_price_is_well_formed(db_session):
+    evidence = _evidence(db_session)
+    ingest(db_session, "TestHost", ProviderType.HOST.value, [_offering("Acme", "Normal", "acme/normal", 0.000001, 0.000002)], evidence)
+    offering = db_session.execute(select(Offering)).scalar_one()
+    prices = db_session.execute(select(PricePoint).where(PricePoint.offering_id == offering.id)).scalars().all()
+    for p in prices:
+        assert p.state == PriceState.KNOWN.value
+        assert p.amount is not None and p.amount > 0

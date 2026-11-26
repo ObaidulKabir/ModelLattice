@@ -33,7 +33,7 @@ from app.models.catalog import Offering
 from app.models.measurement import Measurement
 from app.models.pricing import PricePoint
 from app.models.types import MeasurementStatus, OfferingLifecycle, PriceType, SubjectType
-from app.services.cost import DEFAULT_AVG_INPUT_TOKENS, DEFAULT_AVG_OUTPUT_TOKENS
+from app.services.cost import DEFAULT_AVG_INPUT_TOKENS, DEFAULT_AVG_OUTPUT_TOKENS, _is_known_price
 
 COST_KEY = "cost_per_1k_tasks_usd"
 # Not a Measurement-backed attribute (cost is derived from PricePoint), so it
@@ -189,8 +189,9 @@ def reference_population(db: Session, key: str, task_profile: str | None = None)
 
 def _cost_values(db: Session, offering_ids: set[uuid.UUID]) -> dict[uuid.UUID, float | None]:
     """Catalog-wide cost per 1k tasks from ONE query of current price rows,
-    mirroring estimate_cost_per_1k_tasks (per_1m_tokens only, negative
-    sentinel amounts are unknown)."""
+    mirroring estimate_cost_per_1k_tasks (per_1m_tokens, PriceState.KNOWN
+    only - a non-known price, e.g. OpenRouter's variable-price routers, has
+    no real amount to use)."""
     prices: dict[uuid.UUID, dict[str, PricePoint]] = {}
     stmt = select(PricePoint).where(PricePoint.effective_to.is_(None)).order_by(PricePoint.effective_from.desc())
     for p in db.execute(stmt).scalars():
@@ -201,7 +202,7 @@ def _cost_values(db: Session, offering_ids: set[uuid.UUID]) -> dict[uuid.UUID, f
         outp = prices.get(oid, {}).get(PriceType.OUTPUT_TOKEN.value)
         if inp is None or outp is None or inp.unit != "per_1m_tokens" or outp.unit != "per_1m_tokens":
             out[oid] = None
-        elif inp.amount < 0 or outp.amount < 0:
+        elif not _is_known_price(inp) or not _is_known_price(outp):
             out[oid] = None
         else:
             per_task = (DEFAULT_AVG_INPUT_TOKENS / 1e6) * inp.amount + (DEFAULT_AVG_OUTPUT_TOKENS / 1e6) * outp.amount

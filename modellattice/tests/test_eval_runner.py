@@ -148,3 +148,26 @@ def test_budget_cap_blocks_run_and_writes_nothing(db_session, monkeypatch):
     assert client.calls == 0  # refused before ever calling the model
     runs = db_session.execute(select(EvalRun)).scalars().all()
     assert len(runs) == 1  # only the prior simulated run; nothing new written
+
+
+def test_estimate_call_cost_is_none_for_a_variable_priced_offering(db_session):
+    """A variable-priced offering (OpenRouter's auto-router convention) has
+    no real per-token amount to cost a call against - must return None
+    rather than crash on amount=None or silently cost it as free."""
+    from app.evals.runner import _estimate_call_cost
+    from app.models.types import PriceState
+
+    offering = _make_offering(db_session, with_pricing=False)
+    now = dt.datetime.now(dt.timezone.utc)
+    db_session.add(PricePoint(offering_id=offering.id, price_type=PriceType.INPUT_TOKEN.value, unit="per_1m_tokens", amount=None, state=PriceState.VARIABLE.value, effective_from=now))
+    db_session.add(PricePoint(offering_id=offering.id, price_type=PriceType.OUTPUT_TOKEN.value, unit="per_1m_tokens", amount=None, state=PriceState.VARIABLE.value, effective_from=now))
+    db_session.commit()
+
+    assert _estimate_call_cost(offering, db_session, 100, 50) is None
+
+
+def test_estimate_call_cost_still_computes_for_a_known_price(db_session):
+    from app.evals.runner import _estimate_call_cost
+
+    offering = _make_offering(db_session)  # amount=1.0/2.0, state defaults to "known"
+    assert _estimate_call_cost(offering, db_session, 1_000_000, 1_000_000) == pytest.approx(3.0)

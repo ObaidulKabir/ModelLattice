@@ -19,13 +19,28 @@ app/
                   eval runs, UMFR feedback, the recommendation audit log.
   schemas/        Pydantic request/response contracts.
   services/
-    cost.py        Cost-per-1k-tasks estimation from current pricing. A
-                    negative price is treated as unknown, not a number:
-                    OpenRouter's variable-price routers (openrouter/auto)
-                    report -1 per token, i.e. -$1,000,000 per 1M, which
-                    would corrupt every cost comparison. $0 stays valid
-                    (real free tiers). A fuller explicit pricing-state
-                    model (known/variable/free/unavailable) is future work.
+    cost.py        Cost-per-1k-tasks estimation from current pricing.
+                    PricePoint.state (app/models/types.py::PriceState) makes
+                    pricing an explicit state, not a number that might be a
+                    sentinel: "known" (a real, trustworthy amount) or
+                    "variable" (OpenRouter's documented convention for its
+                    auto-routers - e.g. openrouter/auto reports -1 per
+                    token, meaning "depends on the routed model", which
+                    this project used to store literally as -$1,000,000 per
+                    1M tokens and treat as a real negative price). A
+                    variable row's amount is always null - never the
+                    sentinel number - set once, in app/connectors/base.py::
+                    upsert_price, the one place every connector's prices
+                    pass through. _is_known_price() gates every cost
+                    calculation (estimate_cost_per_1k_tasks, ranking.py's
+                    catalog-wide cost dimension, the eval runner's real-
+                    money budget tracking) on BOTH state and a sane amount -
+                    defense in depth for any row not written through
+                    upsert_price (seed data, a migration backfill). $0
+                    stays a valid "known" price (real free tiers). More
+                    states (negotiated, not_applicable) are data to add
+                    once a real source needs one, not speculative design
+                    for sources this project doesn't ingest yet.
                     pricing_freshness() reports verification age, not last-
                     changed age: PricePoint.last_verified_at is bumped on
                     every connector run that re-confirms a price (even
@@ -299,7 +314,7 @@ scripts/
   scheduler_daemon.py  Long-running process wrapping app/scheduler.py -
                     run it as its own service, separate from the web app.
   run_eval.py        CLI to run a REAL evaluation against a live offering.
-tests/            pytest suite against an in-memory SQLite DB (152 tests).
+tests/            pytest suite against an in-memory SQLite DB (173 tests).
 Dockerfile, .dockerignore, docker-compose.yml  Containerizes the app
   itself (postgres was already containerized) - an `app` service
   (migrations then uvicorn) and a profile-gated `scheduler` service, so

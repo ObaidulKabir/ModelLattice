@@ -80,6 +80,22 @@ class PriceType(str, enum.Enum):
     HOSTING = "hosting"
 
 
+class PriceState(str, enum.Enum):
+    """A price is never just a number (v0.1 Section 3, "evidence before
+    assertion" - applies to pricing as much as to measurements). Deliberately
+    only the two states a real source has actually given us evidence for -
+    see app/connectors/base.py::upsert_price. More states (e.g. negotiated,
+    not_applicable) are data to add here once a real connector needs one,
+    not speculative design for sources this project doesn't ingest yet."""
+
+    KNOWN = "known"  # a real, fixed per-token amount - PricePoint.amount is trustworthy
+    # OpenRouter's documented convention for its variable-price routers
+    # (e.g. openrouter/auto): -1 per token means "depends on the model it
+    # routes to", not a real negative price. amount is null for this state -
+    # never store the sentinel as if it were a real number.
+    VARIABLE = "variable"
+
+
 class RelationshipType(str, enum.Enum):
     """v0.1 Section 6.2. Complementarity/compatibility are defined but
     deferred past the MVP (v0.2 Section 5.2)."""

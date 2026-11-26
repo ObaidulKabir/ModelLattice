@@ -40,7 +40,8 @@ class PricePointOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     price_type: str
     unit: str
-    amount: float
+    amount: float | None  # null unless state == "known" - never a sentinel standing in for "we don't know"
+    state: str  # PriceState: "known" | "variable"
     currency: str
     effective_from: dt.datetime
     effective_to: dt.datetime | None

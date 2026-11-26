@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.models.catalog import Model, Offering, Provider
 from app.models.measurement import EvidenceSource, Measurement
 from app.models.pricing import PricePoint
-from app.models.types import EvidenceType, MeasurementStatus, OfferingLifecycle, PriceType, ProviderType, SubjectType
+from app.models.types import EvidenceType, MeasurementStatus, OfferingLifecycle, PriceState, PriceType, ProviderType, SubjectType
 
 
 @dataclasses.dataclass
@@ -107,11 +107,26 @@ def _get_or_create_offering(db: Session, model_id: uuid.UUID, provider_id: uuid.
 
 def upsert_price(db: Session, offering_id: uuid.UUID, price_type: str, amount_per_1m: float, evidence_id: uuid.UUID, now: dt.datetime) -> bool:
     """Returns True if a new price_point row was written (price changed or
-    this is the first observation)."""
+    this is the first observation).
+
+    A negative amount is never a real price - every connector that reaches
+    here reports per-token prices straight from a source, and the only
+    documented real-world cause is OpenRouter's variable-price routers
+    (e.g. openrouter/auto), whose "-1 per token" means "depends on the
+    routed model". Recorded as PriceState.VARIABLE with amount=None, never
+    as the literal sentinel number (which would read as -$1,000,000 per 1M
+    tokens and corrupt any cost comparison that trusted it)."""
+    state = PriceState.VARIABLE.value if amount_per_1m < 0 else PriceState.KNOWN.value
+    stored_amount = None if state == PriceState.VARIABLE.value else amount_per_1m
+
     current = db.execute(
         select(PricePoint).where(PricePoint.offering_id == offering_id, PricePoint.price_type == price_type, PricePoint.effective_to.is_(None))
     ).scalar_one_or_none()
-    if current and current.unit == "per_1m_tokens" and abs(current.amount - amount_per_1m) < 1e-9:
+    unchanged = (
+        current is not None and current.unit == "per_1m_tokens" and current.state == state
+        and (state != PriceState.KNOWN.value or abs(current.amount - stored_amount) < 1e-9)
+    )
+    if unchanged:
         current.last_verified_at = now  # re-confirmed, so it is fresh even though nothing changed
         return False  # unchanged; don't spam history
     if current:
@@ -119,7 +134,7 @@ def upsert_price(db: Session, offering_id: uuid.UUID, price_type: str, amount_pe
     db.add(
         PricePoint(
             offering_id=offering_id, price_type=price_type, unit="per_1m_tokens",
-            amount=amount_per_1m, effective_from=now, last_verified_at=now, source_evidence_id=evidence_id,
+            amount=stored_amount, state=state, effective_from=now, last_verified_at=now, source_evidence_id=evidence_id,
         )
     )
     return True

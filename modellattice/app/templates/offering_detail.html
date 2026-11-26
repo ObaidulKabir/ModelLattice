@@ -34,7 +34,7 @@
   <tr><th>Type</th><th>Unit</th><th>Amount (USD)</th><th>Effective from</th><th>Effective to</th><th>Last verified</th></tr>
   {% for p in prices %}
   <tr>
-    <td>{{ p.price_type }}</td><td>{{ p.unit }}</td><td>{% if p.amount >= 0 %}${{ "%.4f"|format(p.amount) }}{% else %}<span class="muted" title="Source reports a variable/unspecified price (negative sentinel)">variable / unknown</span>{% endif %}</td>
+    <td>{{ p.price_type }}</td><td>{{ p.unit }}</td><td>{% if p.state == "known" and p.amount is not none and p.amount >= 0 %}${{ "%.4f"|format(p.amount) }}{% else %}<span class="muted" title="Depends on the model this offering routes to (e.g. an auto-router) - no fixed price to report">variable</span>{% endif %}</td>
     <td>{{ p.effective_from.strftime("%Y-%m-%d %H:%M") }}</td>
     <td>{% if p.effective_to %}{{ p.effective_to.strftime("%Y-%m-%d %H:%M") }}{% else %}<span class="pill ok">current</span>{% endif %}</td>
     <td>{{ (p.last_verified_at or p.effective_from).strftime("%Y-%m-%d %H:%M") }}</td>

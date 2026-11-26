@@ -6,11 +6,11 @@ import pytest
 
 from app.models.catalog import Model, Offering, Provider
 from app.models.pricing import PricePoint
-from app.models.types import PriceType
+from app.models.types import PriceState, PriceType
 from app.services.cost import estimate_cost_per_1k_tasks
 
 
-def _priced_offering(db, name, input_amount, output_amount):
+def _priced_offering(db, name, input_amount, output_amount, state=PriceState.KNOWN.value):
     provider = db.query(Provider).filter_by(name="host").first() or Provider(name="host", type="host")
     db.add(provider)
     db.flush()
@@ -22,7 +22,7 @@ def _priced_offering(db, name, input_amount, output_amount):
     db.flush()
     now = dt.datetime.now(dt.timezone.utc)
     for price_type, amount in ((PriceType.INPUT_TOKEN.value, input_amount), (PriceType.OUTPUT_TOKEN.value, output_amount)):
-        db.add(PricePoint(offering_id=o.id, price_type=price_type, unit="per_1m_tokens", amount=amount, effective_from=now))
+        db.add(PricePoint(offering_id=o.id, price_type=price_type, unit="per_1m_tokens", amount=amount, state=state, effective_from=now))
     db.commit()
     return o
 
@@ -47,3 +47,18 @@ def test_normal_price_still_computes(db_session):
     paid = _priced_offering(db_session, "paid", 1.0, 2.0)
     cost, _ = estimate_cost_per_1k_tasks(db_session, paid.id)
     assert cost == pytest.approx((500 / 1e6 * 1.0 + 300 / 1e6 * 2.0) * 1000)
+
+
+def test_variable_state_is_unknown_even_with_a_null_amount(db_session):
+    """The real path (app/connectors/base.py::upsert_price): a variable
+    price is recorded with state="variable" and amount=None - no sign to
+    infer from, so the state itself must gate this."""
+    router = _priced_offering(db_session, "router", None, None, state=PriceState.VARIABLE.value)
+    assert estimate_cost_per_1k_tasks(db_session, router.id) == (None, None)
+
+
+def test_known_state_with_an_impossible_negative_amount_is_still_rejected(db_session):
+    """Defense in depth: state alone is not trusted either - an amount must
+    also be a sane non-negative number."""
+    impossible = _priced_offering(db_session, "impossible", -5.0, 2.0, state=PriceState.KNOWN.value)
+    assert estimate_cost_per_1k_tasks(db_session, impossible.id) == (None, None)

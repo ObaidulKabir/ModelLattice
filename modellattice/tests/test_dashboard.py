@@ -150,14 +150,38 @@ def test_pagination_links_carry_the_ranking_state(client, db_session):
     assert "dim=intelligence_index&mode=absolute&page=2" in html
 
 
-def test_negative_sentinel_price_renders_as_dash_not_a_dollar_amount(client, db_session):
+def test_variable_price_renders_as_a_label_not_a_dollar_amount(client, db_session):
+    """Exercises the real path (upsert_price), which is what actually
+    classifies an OpenRouter-style -1-per-token sentinel as state=variable
+    with no stored amount - not a hand-built row that can't occur in
+    practice."""
+    from app.connectors.base import upsert_price
+    from app.models.measurement import EvidenceSource
+    from app.models.types import EvidenceType
+
+    offering = _seed_one_offering(db_session)
+    evidence = EvidenceSource(type=EvidenceType.OFFICIAL_DOC.value, collected_at=dt.datetime.now(dt.timezone.utc))
+    db_session.add(evidence)
+    db_session.flush()
+    upsert_price(db_session, offering.id, PriceType.OUTPUT_TOKEN.value, -1_000_000.0, evidence.id, dt.datetime.now(dt.timezone.utc))
+    db_session.commit()
+
+    listing = client.get("/dashboard/offerings").text
+    assert "-1000000" not in listing and "$-" not in listing and "variable" in listing
+    detail = client.get(f"/dashboard/offerings/{offering.id}").text
+    assert "-1000000" not in detail and "variable" in detail
+
+
+def test_known_price_with_an_impossible_negative_amount_still_never_renders_as_a_dollar_figure(client, db_session):
+    """Defense in depth: a row that reached state="known" with a negative
+    amount (which upsert_price itself never produces, but a seed script,
+    fixture, or future code bypassing it could) must still never display as
+    a dollar amount - the template checks the amount too, not just state."""
     offering = _seed_one_offering(db_session)
     db_session.add(PricePoint(offering_id=offering.id, price_type=PriceType.OUTPUT_TOKEN.value, unit="per_1m_tokens", amount=-1_000_000.0, effective_from=dt.datetime.now(dt.timezone.utc)))
     db_session.commit()
     listing = client.get("/dashboard/offerings").text
     assert "-1000000" not in listing and "$-" not in listing
-    detail = client.get(f"/dashboard/offerings/{offering.id}").text
-    assert "-1000000" not in detail and "variable / unknown" in detail
 
 
 def test_static_logo_assets_are_served(client):

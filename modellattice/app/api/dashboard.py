@@ -137,6 +137,7 @@ def offerings_list(
                 "id": o.id, "family": o.model.family, "developer": o.model.developer.name if o.model.developer else "—",
                 "host": o.provider.name, "name": o.provider_model_name, "lifecycle": o.lifecycle,
                 "input_price": inp.amount if inp else None, "output_price": out.amount if out else None,
+                "input_state": inp.state if inp else None, "output_state": out.state if out else None,
                 "context_window": (o.limits or {}).get("max_context_tokens"),
                 "tool_calling": (o.api_features or {}).get("tool_calling"),
                 "json_schema": (o.api_features or {}).get("json_schema_output"),
