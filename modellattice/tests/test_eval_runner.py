@@ -171,3 +171,14 @@ def test_estimate_call_cost_still_computes_for_a_known_price(db_session):
 
     offering = _make_offering(db_session)  # amount=1.0/2.0, state defaults to "known"
     assert _estimate_call_cost(offering, db_session, 1_000_000, 1_000_000) == pytest.approx(3.0)
+
+
+def test_a_model_cannot_judge_itself(db_session):
+    """A real pre-existing gap: run_evaluation only checked that SOME
+    judge was supplied, never that it differed from the candidate."""
+    offering = _make_offering(db_session)
+    client = FixtureModelClient()
+
+    for profile in ("rag-qa", "summarization"):
+        with pytest.raises(runner_module.JudgeRequiredError, match="cannot judge itself"):
+            runner_module.run_evaluation(db_session, offering, profile, 1, client, judge_client=client, judge_offering=offering)

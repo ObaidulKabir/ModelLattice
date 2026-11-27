@@ -314,7 +314,7 @@ scripts/
   scheduler_daemon.py  Long-running process wrapping app/scheduler.py -
                     run it as its own service, separate from the web app.
   run_eval.py        CLI to run a REAL evaluation against a live offering.
-tests/            pytest suite against an in-memory SQLite DB (214 tests).
+tests/            pytest suite against an in-memory SQLite DB (218 tests).
 Dockerfile, .dockerignore, docker-compose.yml  Containerizes the app
   itself (postgres was already containerized) - an `app` service
   (migrations then uvicorn) and a profile-gated `scheduler` service, so
@@ -492,12 +492,11 @@ offerings in a single run:
   --task-profile structured-extraction --max-total-budget-usd 0.20 --limit 5 [--dry-run]
 ```
 
-v1 scope, deliberately: the three deterministic task profiles only
-(`structured-extraction`, `code-edit`, `tool-use-agent` - no judge model
-to pick for hundreds of runs), and OpenRouter-evaluable offerings only
-(matching what `app/evals/model_client.py` can call live today; `rag-qa`/
-`summarization` and non-OpenRouter providers stay single-invocation via
-`scripts/run_eval.py`). Selection (`app/evals/batch.py::select_targets`)
+All 5 task profiles are now supported (judge-scored `rag-qa`/
+`summarization` included - see below); OpenRouter-evaluable offerings
+only (matching what `app/evals/model_client.py` can call live today;
+non-OpenRouter providers stay single-invocation via `scripts/run_eval.py`).
+Selection (`app/evals/batch.py::select_targets`)
 picks offerings with **zero** `task_quality_score` evidence for the exact
 requested profile@version - breadth over depth, since one new data point
 moves the near-zero coverage number further than a second data point on
@@ -522,6 +521,40 @@ the just-evaluated ones excluded. Still just a few dozen of the ~2,455
 OpenRouter combinations - a human deliberately choosing a larger
 `--max-total-budget-usd` is how the rest gets closed, not anything this
 change runs automatically.
+
+**Judge-scored profiles (`rag-qa`/`summarization`)** work the same way,
+with one required addition - `--judge-provider-model-name` (or
+`--judge-offering`): ONE judge, explicitly chosen by you, reused for
+every candidate in the batch. Picking a good judge is a quality
+decision this project has never auto-decided anywhere (the single-run
+`scripts/run_eval.py` has always required one too); batching doesn't
+change that. A real, pre-existing gap was found and fixed while adding
+this: `run_evaluation` only ever checked that *some* judge was supplied,
+never that it differed from the candidate - nothing stopped a model from
+judging itself. Fixed at the source (`app/evals/runner.py`, one check),
+so both the single-run and batch paths are protected; `select_targets`
+also excludes the judge's own offering from selection as defense in
+depth, verified live: naming the current cheapest candidate as its own
+judge correctly dropped it from the selected list. The `--dry-run`/
+selection price preview is candidate-cost only - it does not add the
+judge's own call cost, which depends on actual response length rather
+than a fixed per-call estimate; said plainly in the CLI's own output.
+
+**A real external constraint found live, not a code issue**: verifying
+a full judge-scored *success* end-to-end was blocked by the OpenRouter
+account configured in this environment having no purchased credits -
+its free-tier daily quota was exhausted (`429:
+free-models-per-day`) and every paid model returned `402: Insufficient
+credits`. The system did exactly what it should: every failure was
+caught and recorded as real evidence (score 0.0 with the actual error
+preserved), never fabricated, and the judge-exclusion logic was still
+provably correct against this. The actual judge-grading mechanics
+(prompt construction, score parsing, `same_provider_as_candidate`) are
+unchanged, pre-existing code, already verified live in an earlier
+session; what's new here (self-judging guard, batch judge-threading,
+judge exclusion from selection) is covered by 9 new tests with a
+controlled fixture judge, including a full simulated judge-scored batch
+run.
 
 ### Keeping the MCP server honest about what it can do
 

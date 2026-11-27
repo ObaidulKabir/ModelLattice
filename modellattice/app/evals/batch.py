@@ -64,13 +64,19 @@ def coverage_count(db: Session, task_profile_key: str, task_profile_version: int
 
 def select_targets(
     db: Session, task_profile_key: str, task_profile_version: int, limit: int,
+    exclude_offering_id: uuid.UUID | None = None,
 ) -> list[BatchTarget]:
     """OpenRouter-evaluable, non-deprecated/retired offerings with zero
     task_quality_score evidence for this exact profile@version, cheapest
     known price first. Deliberately excludes every other provider -
     app/evals/model_client.py::build_client_for_offering can't call them
     live yet, and this selector must never pick a target the runner will
-    just refuse."""
+    just refuse.
+
+    `exclude_offering_id`: for a judge-scored profile, the batch's judge
+    offering - a model can never judge itself (app/evals/runner.py
+    enforces this too; excluding it here is defense in depth, so a batch
+    slot is never wasted on a selection that would just fail)."""
     evaluated = _already_evaluated_offering_ids(db, task_profile_key, task_profile_version)
 
     offerings = db.execute(
@@ -80,7 +86,7 @@ def select_targets(
         .options(selectinload(Offering.provider), selectinload(Offering.model))
     ).scalars().all()
 
-    candidates = [o for o in offerings if o.id not in evaluated]
+    candidates = [o for o in offerings if o.id not in evaluated and o.id != exclude_offering_id]
 
     targets = []
     for o in candidates:
@@ -111,6 +117,8 @@ def run_batch(
     task_profile_version: int,
     max_total_budget_usd: float,
     client_factory: typing.Callable[[Offering], ModelClientProtocol],
+    judge_client: ModelClientProtocol | None = None,
+    judge_offering: Offering | None = None,
 ) -> BatchReport:
     """Calls app/evals/runner.py::run_evaluation once per target, in the
     order already selected by select_targets(), stopping as soon as
@@ -120,7 +128,16 @@ def run_batch(
     weekly cap is exhausted, not just this offering's slice) rather than
     skipping ahead to a cheaper one - partial results are still real
     evidence, same stance as run_evaluation's own early-stop
-    (runner.py: "stop early rather than overspend")."""
+    (runner.py: "stop early rather than overspend").
+
+    `judge_client`/`judge_offering`: for a judge-scored profile
+    (rag-qa/summarization), the SAME judge is reused for every target in
+    the batch - built once by the caller, exactly how scripts/run_eval.py
+    already does it for a single call. Judge cost is already folded into
+    each RunReport.spent_usd by run_evaluation itself, so no separate
+    accounting is needed here. A target equal to the judge offering is
+    skipped defensively even if present (select_targets should already
+    have excluded it)."""
     coverage_before = coverage_count(db, task_profile_key, task_profile_version)
 
     evaluated: list[tuple[str, RunReport]] = []
@@ -128,6 +145,8 @@ def run_batch(
     total_spent = 0.0
 
     for i, t in enumerate(targets):
+        if judge_offering is not None and t.offering.id == judge_offering.id:
+            continue  # a model can never judge itself - see module docstring
         if total_spent >= max_total_budget_usd:
             skipped_budget.extend(x.offering.provider_model_name for x in targets[i:])
             break
@@ -135,7 +154,10 @@ def run_batch(
         client = client_factory(t.offering)
         remaining = max_total_budget_usd - total_spent
         try:
-            report = run_evaluation(db, t.offering, task_profile_key, task_profile_version, client, max_run_budget_usd=remaining)
+            report = run_evaluation(
+                db, t.offering, task_profile_key, task_profile_version, client, max_run_budget_usd=remaining,
+                judge_client=judge_client, judge_offering=judge_offering,
+            )
         except BudgetExceededError:
             skipped_budget.extend(x.offering.provider_model_name for x in targets[i:])
             break

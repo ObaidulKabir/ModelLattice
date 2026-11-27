@@ -144,6 +144,8 @@ def run_evaluation(
             f"{task_profile_key!r} is judge-scored and requires a separate judge_client + judge_offering "
             "(never the candidate itself - v0.2 Section 9)"
         )
+    if judge_offering is not None and judge_offering.id == offering.id:
+        raise JudgeRequiredError("a model cannot judge itself - judge_offering must differ from the candidate offering")
 
     settings = get_settings()
     max_run_budget_usd = max_run_budget_usd if max_run_budget_usd is not None else settings.eval_max_run_budget_usd

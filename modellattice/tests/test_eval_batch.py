@@ -181,3 +181,77 @@ def test_dry_run_selection_makes_no_db_writes(db_session):
     _offering(db_session, "a/model", 1.0, 1.0)
     select_targets(db_session, "structured-extraction", 1, limit=10)
     assert db_session.execute(select(Measurement)).scalars().all() == []
+
+
+# --- judge-scored profiles (rag-qa, summarization) ---------------------
+
+
+class _AlwaysCorrectJudgeClient:
+    """A canned judge: always scores 1.0, regardless of what it's asked."""
+
+    def complete(self, system, user, max_tokens=1024):
+        import json
+
+        return CompletionResult(text=json.dumps({"score": 1.0, "reasoning": "correct"}), prompt_tokens=50, completion_tokens=10, latency_ms=5)
+
+
+class _RagQaFixtureClient:
+    """Answers every rag-qa task with its own gold answer, so the judge
+    (separately, via _AlwaysCorrectJudgeClient) genuinely has something
+    correct to grade - exercises the real scoring path, not a stub."""
+
+    def complete(self, system, user, max_tokens=1024):
+        from app.evals.tasks import rag_qa_v1
+
+        for task in rag_qa_v1.TASKS:
+            if f"Passage:\n{task['passage']}\n\nQuestion: {task['question']}" == user:
+                return CompletionResult(text=task["gold_answer"], prompt_tokens=80, completion_tokens=20, latency_ms=6)
+        raise AssertionError("fixture client received an unrecognized prompt")
+
+
+def test_select_targets_excludes_the_judge_offering(db_session):
+    judge = _offering(db_session, "a/judge", 1.0, 1.0)
+    candidate = _offering(db_session, "a/candidate", 0.5, 0.5)  # cheaper - would rank first if not excluded
+
+    targets = select_targets(db_session, "rag-qa", 1, limit=10, exclude_offering_id=judge.id)
+    assert [t.offering.id for t in targets] == [candidate.id]
+
+
+def test_run_batch_threads_the_same_judge_through_every_candidate(db_session):
+    judge = _offering(db_session, "a/judge", 1.0, 1.0)
+    candidates = [_offering(db_session, f"a/candidate-{i}", 0.5, 0.5) for i in range(2)]
+
+    targets = select_targets(db_session, "rag-qa", 1, limit=10, exclude_offering_id=judge.id)
+    assert len(targets) == 2
+
+    report = run_batch(
+        db_session, targets, "rag-qa", 1, max_total_budget_usd=10.0,
+        client_factory=lambda offering: _RagQaFixtureClient(),
+        judge_client=_AlwaysCorrectJudgeClient(), judge_offering=judge,
+    )
+
+    assert len(report.evaluated) == 2
+    assert report.coverage_after == 2
+    assert all(r.mean_score == pytest.approx(1.0) for _, r in report.evaluated)
+    assert report.total_spent_usd > 0  # includes real judge-call cost, not just the candidate's
+
+
+def test_run_batch_never_evaluates_the_judge_even_if_present_in_targets(db_session):
+    """Defensive check inside run_batch itself - select_targets should
+    already exclude the judge, but run_batch must never evaluate it even
+    if a caller passes it in anyway."""
+    judge = _offering(db_session, "a/judge", 1.0, 1.0)
+    candidate = _offering(db_session, "a/candidate", 0.5, 0.5)
+
+    targets = select_targets(db_session, "rag-qa", 1, limit=10)  # no exclude - judge IS in the pool
+    assert judge.id in {t.offering.id for t in targets}
+
+    report = run_batch(
+        db_session, targets, "rag-qa", 1, max_total_budget_usd=10.0,
+        client_factory=lambda offering: _RagQaFixtureClient(),
+        judge_client=_AlwaysCorrectJudgeClient(), judge_offering=judge,
+    )
+
+    evaluated_ids = {name for name, _ in report.evaluated}
+    assert judge.provider_model_name not in evaluated_ids
+    assert candidate.provider_model_name in evaluated_ids
