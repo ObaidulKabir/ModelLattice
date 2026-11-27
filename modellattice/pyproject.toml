@@ -16,11 +16,16 @@ dependencies = [
     "mcp>=1.1,<2.0",
     "apscheduler>=3.10,<4.0",
     "jinja2>=3.1,<4.0",
+    # A RUNTIME dependency, not a dev/test tool: app/evals/scorers.py's
+    # code-edit scorer shells out to pytest to actually run a candidate's
+    # code fix. Belongs here, not in the dev-only group below - production
+    # had no pytest installed and every code-edit eval silently scored 0.0
+    # (a real bug found live, not a model-quality result).
+    "pytest>=8.3,<9.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.3,<9.0",
     "pytest-asyncio>=0.24,<1.0",
     "ruff>=0.7,<1.0",
 ]
