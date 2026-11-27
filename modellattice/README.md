@@ -314,7 +314,7 @@ scripts/
   scheduler_daemon.py  Long-running process wrapping app/scheduler.py -
                     run it as its own service, separate from the web app.
   run_eval.py        CLI to run a REAL evaluation against a live offering.
-tests/            pytest suite against an in-memory SQLite DB (208 tests).
+tests/            pytest suite against an in-memory SQLite DB (214 tests).
 Dockerfile, .dockerignore, docker-compose.yml  Containerizes the app
   itself (postgres was already containerized) - an `app` service
   (migrations then uvicorn) and a profile-gated `scheduler` service, so
@@ -522,6 +522,28 @@ the just-evaluated ones excluded. Still just a few dozen of the ~2,455
 OpenRouter combinations - a human deliberately choosing a larger
 `--max-total-budget-usd` is how the rest gets closed, not anything this
 change runs automatically.
+
+### Keeping the MCP server honest about what it can do
+
+`mcp_server/server.py`'s own module docstring states the design goal:
+"Tools call the same service layer as the REST API directly ... so
+behavior never drifts between the two surfaces." That had quietly
+stopped being true: `recommend_model` and `compare_models` had no
+`dimensions`/`mode` parameters at all, so the `capability_weighted`
+policy and dimension-ranked `/v1/compare` (both shipped earlier in this
+project) were simply unreachable from the MCP surface - an agent calling
+`recommend_model(policy="capability_weighted")` would just hit
+`build_recommendation`'s missing-dimensions error with no way to supply
+any. Fixed by adding the same `dimensions`/`mode` parameters REST
+already has (a list of `{"attribute_key", "weight"}`), wired into the
+exact same `rank_offerings`/`build_recommendation` functions - no new
+ranking logic, no risk of the two surfaces disagreeing. Every offering-
+bearing tool (`find_models`, `recommend_model`, `compare_models`,
+`get_connection_info`) now also carries the same `connection` field as
+the REST API. 6 new tests (`tests/test_mcp_server.py`, the project's
+first MCP-level tests) exercise the tools directly against an isolated
+DB, verified against the real local catalog alongside the rest of the
+suite.
 
 ### Connecting to a recommended model (connection info, never a proxy)
 

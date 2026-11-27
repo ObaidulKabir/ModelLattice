@@ -19,6 +19,7 @@ from app.models.decision import RecommendationLog
 from app.models.feedback import FeedbackEvent
 from app.schemas.recommend import Constraints
 from app.services.cost import estimate_cost_per_1k_tasks
+from app.services.ranking import COST_KEY, DimensionWeight, RankingError, rank_offerings, rank_sort_key, resolve_dimension, validate_mode
 from app.services.recommender import build_recommendation, evaluate_offerings
 
 
@@ -42,7 +43,11 @@ mcp = FastMCP("modellattice")
 @mcp.tool()
 def find_models(provider: str | None = None, requires_tool_calling: bool = False) -> list[dict]:
     """Search the catalog of tracked offerings, optionally filtered by
-    provider name or a requirement for tool/function calling support."""
+    provider name or a requirement for tool/function calling support.
+    Each result carries `connection`: what a caller needs to call that
+    offering's provider DIRECTLY with its OWN API key - null when the
+    provider has no connection info on file (see
+    app/connection_registry.py)."""
     db = SessionLocal()
     try:
         from sqlalchemy import select
@@ -113,9 +118,20 @@ def recommend_model(
     no_training_on_inputs: bool = False,
     requires: list[str] | None = None,
     current_offering_id: str | None = None,
+    dimensions: list[dict] | None = None,
+    mode: str = "relative",
 ) -> dict:
     """Get a ranked, explainable model recommendation for a task, under
-    the given constraints. Mirrors POST /v1/recommend."""
+    the given constraints. Mirrors POST /v1/recommend, including
+    policy="capability_weighted": pass `dimensions` as
+    `[{"attribute_key": "intelligence_index", "weight": 2.0}, ...]`
+    (a rankable UMIM dimension, or "cost_per_1k_tasks_usd"/
+    "quality_score") and `mode` as "relative" (normalized within the
+    candidates) or "absolute" (percentile vs the whole catalog, only
+    meaningful with `dimensions`). Each recommendation also carries
+    `connection`: what a caller needs to call that offering's provider
+    DIRECTLY with its OWN API key - ModelLattice never makes the call
+    itself (see app/connection_registry.py)."""
     db = SessionLocal()
     try:
         constraints = Constraints(
@@ -126,7 +142,20 @@ def recommend_model(
             requires=requires or [],
         )
         exclude = {uuid.UUID(current_offering_id)} if current_offering_id else set()
-        result = build_recommendation(db, task_profile, policy, constraints, exclude)
+
+        weights = None
+        if policy == "capability_weighted":
+            if not dimensions:
+                return {"error": "policy 'capability_weighted' requires at least one entry in `dimensions`"}
+            try:
+                validate_mode(mode)
+                for d in dimensions:
+                    resolve_dimension(d["attribute_key"])
+            except RankingError as e:
+                return {"error": str(e)}
+            weights = [DimensionWeight(d["attribute_key"], d.get("weight", 1.0)) for d in dimensions]
+
+        result = build_recommendation(db, task_profile, policy, constraints, exclude, dimensions=weights, mode=mode)
 
         log = RecommendationLog(
             request={
@@ -156,6 +185,11 @@ def recommend_model(
                     "why": c.why,
                     "evidence": c.evidence,
                     "connection": _connection_dict(c.provider_name, c.offering.provider_model_name),
+                    "capability_scores": [
+                        {"attribute_key": s.attribute_key, "raw_value": s.raw_value, "normalized_score": s.normalized_score}
+                        for s in c.capability_scores
+                    ],
+                    "coverage": c.coverage,
                 }
                 for i, c in enumerate(result.candidates, start=1)
             ],
@@ -170,23 +204,69 @@ def recommend_model(
 
 
 @mcp.tool()
-def compare_models(offering_ids: list[str], task_profile: str | None = None) -> list[dict]:
-    """Compare named offerings on cost and quality for a task profile."""
+def compare_models(
+    offering_ids: list[str], task_profile: str | None = None,
+    dimensions: list[dict] | None = None, mode: str = "relative",
+) -> list[dict]:
+    """Compare named offerings on cost and quality for a task profile.
+    Mirrors GET /v1/compare. Optionally rank them by one or more
+    dimensions: pass `dimensions` as `[{"attribute_key":
+    "intelligence_index", "weight": 1.0}, ...]` (a rankable UMIM
+    dimension, or "cost_per_1k_tasks_usd") and `mode` as "relative"
+    (normalized within these offerings) or "absolute" (percentile vs the
+    whole catalog) - adds `rank`/`composite_score`/`coverage`/
+    `capability_scores` to each result. Each result also carries
+    `connection`: what a caller needs to call that offering's provider
+    DIRECTLY with its OWN API key (see app/connection_registry.py)."""
     db = SessionLocal()
     try:
         ids = [uuid.UUID(x) for x in offering_ids]
         candidates = evaluate_offerings(db, ids, task_profile)
-        return [
-            {
+        if not candidates:
+            return []
+
+        rows = {
+            c.offering.id: {
                 "offering_id": str(c.offering.id),
                 "provider_name": c.provider_name,
                 "model_name": c.model_name,
                 "est_cost_per_1k_tasks_usd": c.cost_per_1k_tasks_usd,
                 "quality_score": c.quality_score,
                 "evidence": c.evidence,
+                "connection": _connection_dict(c.provider_name, c.offering.provider_model_name),
             }
             for c in candidates
-        ]
+        }
+        if not dimensions:
+            return list(rows.values())
+
+        try:
+            validate_mode(mode)
+            for d in dimensions:
+                resolve_dimension(d["attribute_key"])
+            weights = [DimensionWeight(d["attribute_key"], d.get("weight", 1.0)) for d in dimensions]
+            ranked = rank_offerings(
+                db, [c.offering for c in candidates], weights, mode, task_profile=task_profile,
+                precomputed_values={COST_KEY: {c.offering.id: c.cost_per_1k_tasks_usd for c in candidates}},
+            )
+        except RankingError as e:
+            return [{"error": str(e)}]
+
+        ordered_ids = sorted(rows, key=lambda oid: rank_sort_key(ranked[oid]))
+        out = []
+        for position, oid in enumerate(ordered_ids, start=1):
+            r = ranked[oid]
+            out.append(
+                {
+                    **rows[oid], "rank": position, "mode": mode, "composite_score": r.composite_score,
+                    "coverage": r.coverage,
+                    "capability_scores": [
+                        {"attribute_key": s.attribute_key, "raw_value": s.raw_value, "normalized_score": s.normalized_score}
+                        for s in r.dimension_scores
+                    ],
+                }
+            )
+        return out
     finally:
         db.close()
 
