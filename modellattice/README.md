@@ -314,7 +314,7 @@ scripts/
   scheduler_daemon.py  Long-running process wrapping app/scheduler.py -
                     run it as its own service, separate from the web app.
   run_eval.py        CLI to run a REAL evaluation against a live offering.
-tests/            pytest suite against an in-memory SQLite DB (201 tests).
+tests/            pytest suite against an in-memory SQLite DB (208 tests).
 Dockerfile, .dockerignore, docker-compose.yml  Containerizes the app
   itself (postgres was already containerized) - an `app` service
   (migrations then uvicorn) and a profile-gated `scheduler` service, so
@@ -522,6 +522,37 @@ the just-evaluated ones excluded. Still just a few dozen of the ~2,455
 OpenRouter combinations - a human deliberately choosing a larger
 `--max-total-budget-usd` is how the rest gets closed, not anything this
 change runs automatically.
+
+### Connecting to a recommended model (connection info, never a proxy)
+
+`GET /v1/offerings`, `GET /v1/recommend`, and the MCP `find_models`/
+`recommend_model`/`get_connection_info` tools now carry a `connection`
+field: `{api_base_url, model_id, auth_scheme, docs_url}` - exactly what
+an agent needs to call that offering's provider **directly**, using its
+**own** API key. This was a deliberate scope decision (see
+`app/connection_registry.py`'s docstring): ModelLattice never proxies or
+executes the real model call itself, never holds or asks for the
+caller's key, and never meters/bills third-party usage - that would be
+a fundamentally different product (a production LLM gateway like
+OpenRouter/Portkey/Helicone), and this project has no tenant/billing
+infrastructure to support it safely. `connection` is `null` for any
+offering whose provider has no entry in the small, hand-maintained
+`CONNECTION_INFO` map (currently OpenRouter, OpenAI, Anthropic, Google)
+- never a guessed URL. The same facts are also written into
+`Provider.urls` (a column that already existed and was unused
+everywhere else in this codebase) by `seed_provider_urls()`, called
+every connector run alongside the existing `ensure_attribute_definitions()`
+- so they're inspectable in the database like everything else, not
+hidden in code. The dashboard's offering detail page shows the same
+block under "Connect to this model." `GET /v1/compare`'s legacy
+(no-`dimension`) response deliberately does NOT get this field, to
+protect its existing byte-identical-response guarantee.
+
+Verified live against the real local catalog: a real OpenAI offering's
+`/v1/offerings` and `/v1/recommend` entries both carry
+`https://api.openai.com/v1` + its real `provider_model_name`; an
+offering from a provider not in the map correctly returns
+`connection: null`.
 
 ### Keeping the catalog fresh automatically
 

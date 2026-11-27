@@ -55,6 +55,18 @@ class DimensionScoreOut(BaseModel):
     normalized_score: float | None = None  # null = unknown (never 0)
 
 
+class ConnectionOut(BaseModel):
+    """What a caller needs to call this offering's provider DIRECTLY,
+    with the caller's OWN API key - ModelLattice never makes this call
+    itself (see app/connection_registry.py). None when the offering's
+    provider has no connection info on file - never a guessed URL."""
+
+    api_base_url: str
+    model_id: str  # the provider's own model identifier - pass this as "model" in the request
+    auth_scheme: str
+    docs_url: str
+
+
 class Recommendation(BaseModel):
     rank: int
     offering_id: uuid.UUID
@@ -67,6 +79,7 @@ class Recommendation(BaseModel):
     freshness: Freshness
     capability_scores: list[DimensionScoreOut] = Field(default_factory=list)
     coverage: float | None = None  # share of requested dimension weight with evidence (capability_weighted only)
+    connection: ConnectionOut | None = None
 
 
 class Exclusion(BaseModel):

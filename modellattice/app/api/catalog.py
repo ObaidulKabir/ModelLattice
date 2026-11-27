@@ -8,10 +8,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app.connection_registry import connection_info_for
 from app.db import get_db
 from app.models.catalog import Model, Offering
 from app.monitoring.regression import check_regression
 from app.schemas.catalog import ModelOut, OfferingOut, PricePointOut
+from app.schemas.recommend import ConnectionOut
 from app.services.alternatives import find_alternatives
 from app.services.cost import estimate_cost_per_1k_tasks, get_current_prices
 from app.services.ranking import COST_KEY, DimensionWeight, RankingError, rank_offerings, rank_sort_key, resolve_dimension, validate_mode
@@ -39,6 +41,7 @@ def list_offerings(
             continue
         if lifecycle and o.lifecycle != lifecycle:
             continue
+        info = connection_info_for(o.provider.name)
         out.append(
             OfferingOut(
                 id=o.id,
@@ -51,6 +54,13 @@ def list_offerings(
                 provider_name=o.provider.name,
                 model_family=o.model.family,
                 model_version=o.model.version,
+                connection=(
+                    ConnectionOut(
+                        api_base_url=info.api_base_url, model_id=o.provider_model_name,
+                        auth_scheme=info.auth_scheme, docs_url=info.docs_url,
+                    )
+                    if info else None
+                ),
             )
         )
     return out

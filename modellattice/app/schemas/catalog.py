@@ -3,6 +3,8 @@ import uuid
 
 from pydantic import BaseModel, ConfigDict
 
+from app.schemas.recommend import ConnectionOut
+
 
 class ProviderOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -34,6 +36,7 @@ class OfferingOut(BaseModel):
     provider_name: str | None = None
     model_family: str | None = None
     model_version: str | None = None
+    connection: ConnectionOut | None = None
 
 
 class PricePointOut(BaseModel):

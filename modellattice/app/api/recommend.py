@@ -9,12 +9,14 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.connection_registry import connection_info_for
 from app.db import get_db
 from app.models.decision import RecommendationLog
 from app.schemas.recommend import (
     Exclusion as ExclusionOut,
 )
 from app.schemas.recommend import (
+    ConnectionOut,
     DimensionScoreOut,
     Freshness,
     QualityEstimate,
@@ -56,6 +58,14 @@ def recommend(req: RecommendRequest, db: Session = Depends(get_db)):
 
     recs = []
     for i, c in enumerate(result.candidates, start=1):
+        info = connection_info_for(c.provider_name)
+        connection = (
+            ConnectionOut(
+                api_base_url=info.api_base_url, model_id=c.offering.provider_model_name,
+                auth_scheme=info.auth_scheme, docs_url=info.docs_url,
+            )
+            if info else None
+        )
         recs.append(
             Recommendation(
                 rank=i,
@@ -77,6 +87,7 @@ def recommend(req: RecommendRequest, db: Session = Depends(get_db)):
                     for s in c.capability_scores
                 ],
                 coverage=c.coverage,
+                connection=connection,
             )
         )
 

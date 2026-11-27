@@ -15,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+from app.connection_registry import connection_info_for
 from app.db import get_db
 from app.models.catalog import Model, Offering, Provider
 from app.models.evaluation import EvalResult, EvalRun
@@ -196,11 +197,14 @@ def offering_detail(request: Request, offering_id: uuid.UUID, db: Session = Depe
     except Exception:
         regression = None
 
+    connection = connection_info_for(offering.provider.name)
+
     return templates.TemplateResponse(
         request, "offering_detail.html",
         {
             "offering": offering, "siblings": sibling_offerings, "prices": prices, "measurements": measurements,
             "alternatives": alternatives, "eval_results": eval_results, "regression": regression,
+            "connection": connection,
         },
     )
 

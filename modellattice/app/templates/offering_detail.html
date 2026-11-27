@@ -16,6 +16,19 @@
   <div>Model ID</div><div class="mono">{{ offering.model_id }}</div>
 </div>
 
+<h2>Connect to this model</h2>
+{% if connection %}
+<p class="sub">ModelLattice doesn't call this model on your behalf - this is what you'd use to call the provider yourself, with your own API key.</p>
+<div class="kv">
+  <div>API base URL</div><div class="mono">{{ connection.api_base_url }}</div>
+  <div>Model ID to pass</div><div class="mono">{{ offering.provider_model_name }}</div>
+  <div>Auth</div><div>{{ connection.auth_scheme }}</div>
+  <div>Docs</div><div><a href="{{ connection.docs_url }}">{{ connection.docs_url }}</a></div>
+</div>
+{% else %}
+<p class="muted">No connection info on file for {{ offering.provider.name }} yet.</p>
+{% endif %}
+
 <h2>Other offerings of this model ({{ siblings|length }})</h2>
 <p class="sub">Same underlying Model, different commercial exposure - this is the Model/Offering distinction. Compare hosts and tiers directly.</p>
 <table>

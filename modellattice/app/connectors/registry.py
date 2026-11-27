@@ -17,6 +17,7 @@ import dataclasses
 import datetime as dt
 
 from app.attribute_registry import ensure_attribute_definitions
+from app.connection_registry import seed_provider_urls
 from app.connectors import (
     anthropic_governance,
     anthropic_pricing,
@@ -123,6 +124,7 @@ def run_connector(name: str) -> ConnectorRunResult:
     db = SessionLocal()
     try:
         ensure_attribute_definitions(db)  # cheap, idempotent - guarantees every attribute a connector writes is registered
+        seed_provider_urls(db)  # cheap, idempotent - keeps Provider.urls connection info current
         evidence = EvidenceSource(
             type=cfg["evidence_type"], uri=cfg["url"], method=cfg["method"],
             collected_at=dt.datetime.now(dt.timezone.utc), content_hash=content_hash,

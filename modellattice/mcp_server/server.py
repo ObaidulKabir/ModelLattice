@@ -13,12 +13,28 @@ import uuid
 
 from mcp.server.fastmcp import FastMCP
 
+from app.connection_registry import connection_info_for
 from app.db import SessionLocal
 from app.models.decision import RecommendationLog
 from app.models.feedback import FeedbackEvent
 from app.schemas.recommend import Constraints
 from app.services.cost import estimate_cost_per_1k_tasks
 from app.services.recommender import build_recommendation, evaluate_offerings
+
+
+def _connection_dict(provider_name: str, provider_model_name: str) -> dict | None:
+    """What a caller needs to call this offering's provider DIRECTLY,
+    with the caller's OWN API key - ModelLattice never makes this call
+    itself (see app/connection_registry.py). None when the provider has
+    no connection info on file."""
+    info = connection_info_for(provider_name)
+    if info is None:
+        return None
+    return {
+        "api_base_url": info.api_base_url, "model_id": provider_model_name,
+        "auth_scheme": info.auth_scheme, "docs_url": info.docs_url,
+    }
+
 
 mcp = FastMCP("modellattice")
 
@@ -48,9 +64,41 @@ def find_models(provider: str | None = None, requires_tool_calling: bool = False
                     "model_name": o.model.canonical_name,
                     "lifecycle": o.lifecycle,
                     "api_features": o.api_features,
+                    "connection": _connection_dict(o.provider.name, o.provider_model_name),
                 }
             )
         return out
+    finally:
+        db.close()
+
+
+@mcp.tool()
+def get_connection_info(offering_id: str) -> dict:
+    """What a caller needs to call this offering's provider DIRECTLY,
+    using the caller's OWN API key: the base URL, the exact model
+    identifier to pass, and the auth scheme that provider expects.
+    ModelLattice never makes this call itself and never holds or asks
+    for the caller's key - connection info only (see
+    app/connection_registry.py). Returns `connection: null` when the
+    offering's provider has no connection info on file, never a guessed
+    URL."""
+    db = SessionLocal()
+    try:
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        from app.models.catalog import Offering
+
+        offering = db.execute(
+            select(Offering).where(Offering.id == uuid.UUID(offering_id)).options(selectinload(Offering.provider))
+        ).scalar_one_or_none()
+        if offering is None:
+            return {"error": "offering not found"}
+        return {
+            "offering_id": offering_id,
+            "provider_name": offering.provider.name,
+            "connection": _connection_dict(offering.provider.name, offering.provider_model_name),
+        }
     finally:
         db.close()
 
@@ -107,6 +155,7 @@ def recommend_model(
                     "maturity": c.quality_maturity,
                     "why": c.why,
                     "evidence": c.evidence,
+                    "connection": _connection_dict(c.provider_name, c.offering.provider_model_name),
                 }
                 for i, c in enumerate(result.candidates, start=1)
             ],
